@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+python-multipart
+# Aggiungi qui le librerie usate dentro diet_parser.py e receipt_scanner.py
+# Esempio: pytesseract, pdfplumber, ecc.

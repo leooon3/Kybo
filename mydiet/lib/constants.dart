@@ -1,6 +1,6 @@
 // --- CONFIGURAZIONE SERVER ---
 // IMPORTANTE: Sostituisci con il TUO indirizzo IP locale aggiornato
-const String serverUrl = 'http://192.168.1.53:8000';
+const String serverUrl = 'https://mydiet-74rg.onrender.com';
 
 // --- LISTE KEYWORDS ---
 const Set<String> fruitKeywords = {
