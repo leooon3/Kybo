@@ -140,6 +140,66 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     prefs.setStringList('shoppingList', shoppingList);
   }
 
+  void _moveBoughtItemsToPantry() {
+    List<String> remainingList = [];
+    int movedCount = 0;
+
+    for (String item in shoppingList) {
+      if (item.startsWith("OK_")) {
+        // 1. Pulisce la stringa: "OK_Mela (2 pz)" -> "Mela (2 pz)"
+        String clean = item.substring(3).trim();
+
+        // 2. Regex per estrarre nome, quantità e unità
+        // Cerca pattern tipo: "Nome Cibo (100 g)" oppure "Nome (2 pz)"
+        final regex = RegExp(r'^(.*)\s+\((\d+(?:[.,]\d+)?)\s*([a-zA-Z]+)\)$');
+        final match = regex.firstMatch(clean);
+
+        String name;
+        double qty;
+        String unit;
+
+        if (match != null) {
+          // Caso formattato: "Pasta (500 g)"
+          name = match.group(1)!.trim();
+          qty = double.tryParse(match.group(2)!.replaceAll(',', '.')) ?? 1.0;
+          unit = match.group(3)!.trim();
+        } else {
+          // Caso semplice: "Dentifricio" -> default 1 pz
+          name = clean;
+          qty = 1.0;
+          unit = 'pz';
+        }
+
+        // 3. Aggiunge alla dispensa
+        _addOrUpdatePantry(name, qty, unit);
+        movedCount++;
+      } else {
+        // Se non è spuntato, rimane nella lista spesa
+        remainingList.add(item);
+      }
+    }
+
+    if (movedCount > 0) {
+      setState(() {
+        shoppingList = remainingList;
+      });
+      _saveLocalData();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Spostati $movedCount prodotti in dispensa! 🏠"),
+          backgroundColor: Colors.green[700],
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Nessun prodotto spuntato da spostare."),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+  }
+
   void _addOrUpdatePantry(String name, double qty, String unit) {
     int existingIndex = pantryItems.indexWhere(
       (p) => p.name.toLowerCase() == name.toLowerCase() && p.unit == unit,
@@ -559,6 +619,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                       ),
                     );
                   },
+                ),
+              if (_currentIndex == 2)
+                IconButton(
+                  icon: const Icon(
+                    Icons.archive_outlined,
+                    color: Colors.black87,
+                  ),
+                  tooltip: "Sposta nel frigo",
+                  onPressed:
+                      _moveBoughtItemsToPantry, // Richiama la funzione appena creata
                 ),
               const SizedBox(width: 8),
             ],
