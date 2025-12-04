@@ -9,6 +9,7 @@ import '../services/api_service.dart';
 import '../constants.dart';
 import 'diet_view.dart';
 import 'pantry_view.dart';
+import 'shopping_list_view.dart'; // <--- Importante!
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -22,6 +23,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? substitutions;
   Map<String, ActiveSwap> activeSwaps = {};
   List<PantryItem> pantryItems = [];
+  List<String> shoppingList = []; // <--- Nuova lista spesa
 
   bool isLoading = true;
   bool isUploading = false;
@@ -55,6 +57,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   // --- LOGICA DATI ---
   Future<void> _loadLocalData() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // 1. Dieta
     String? dietJson = prefs.getString('dietData');
     if (dietJson != null) {
       final data = json.decode(dietJson);
@@ -66,6 +70,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _loadAssetDiet();
     }
 
+    // 2. Dispensa
     String? pantryJson = prefs.getString('pantryItems');
     if (pantryJson != null) {
       List<dynamic> decoded = json.decode(pantryJson);
@@ -76,6 +81,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       );
     }
 
+    // 3. Sostituzioni Attive
     String? swapsJson = prefs.getString('activeSwaps');
     if (swapsJson != null) {
       Map<String, dynamic> decoded = json.decode(swapsJson);
@@ -85,6 +91,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         ),
       );
     }
+
+    // 4. Lista Spesa (NUOVO)
+    List<String>? savedList = prefs.getStringList('shoppingList');
+    if (savedList != null) {
+      setState(() => shoppingList = savedList);
+    }
+
     setState(() => isLoading = false);
   }
 
@@ -103,22 +116,28 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   Future<void> _saveLocalData() async {
     final prefs = await SharedPreferences.getInstance();
+
     prefs.setString(
       'pantryItems',
       json.encode(pantryItems.map((e) => e.toJson()).toList()),
     );
+
     prefs.setString(
       'activeSwaps',
       json.encode(
         activeSwaps.map((key, value) => MapEntry(key, value.toJson())),
       ),
     );
+
     if (dietData != null) {
       prefs.setString(
         'dietData',
         json.encode({'plan': dietData, 'substitutions': substitutions}),
       );
     }
+
+    // Salvataggio Lista Spesa
+    prefs.setStringList('shoppingList', shoppingList);
   }
 
   void _addOrUpdatePantry(String name, double qty, String unit) {
@@ -315,7 +334,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // Parsing Semplificato per brevità
     RegExp regExp = RegExp(r'(\d+(?:[.,]\d+)?)');
     double qtyToEat = 0.0;
     if (pantryItems[idx].unit == 'g') {
@@ -452,6 +470,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     );
   }
 
+  // --- COSTRUZIONE UI ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -484,6 +503,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 setState(() {
                   dietData = null;
                   pantryItems = [];
+                  shoppingList = [];
                 });
                 // ignore: use_build_context_synchronously
                 Navigator.pop(context);
@@ -495,14 +515,15 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           SliverAppBar(
-            // 1. Sfondo bianco e icone scure per pulizia e contrasto
             backgroundColor: Colors.white,
             foregroundColor: Colors.black,
             elevation: 2,
             forceElevated: innerBoxIsScrolled,
 
             title: Text(
-              _currentIndex == 0 ? 'MyDiet' : 'Dispensa',
+              _currentIndex == 0
+                  ? 'MyDiet'
+                  : (_currentIndex == 1 ? 'Dispensa' : 'Lista Spesa'),
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.black87,
@@ -514,7 +535,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
             actions: [
               if (_currentIndex == 0)
-                // 2. Sostituito lo Switch con un'Icona cliccabile (più visibile)
                 IconButton(
                   icon: Icon(
                     isTranquilMode ? Icons.spa : Icons.spa_outlined,
@@ -524,8 +544,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   tooltip: "Modalità Relax",
                   onPressed: () {
                     setState(() => isTranquilMode = !isTranquilMode);
-
-                    // Feedback visivo immediato
                     ScaffoldMessenger.of(context).removeCurrentSnackBar();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -542,7 +560,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     );
                   },
                 ),
-              // Aggiungo un piccolo spazio a destra
               const SizedBox(width: 8),
             ],
 
@@ -550,43 +567,31 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 ? PreferredSize(
                     preferredSize: const Size.fromHeight(60),
                     child: Container(
-                      height: 55, // Altezza fissa per i tab
+                      height: 55,
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       child: TabBar(
                         controller: _tabController,
-                        isScrollable:
-                            true, // Necessario per 7 giorni su schermi piccoli
-                        tabAlignment: TabAlignment
-                            .start, // Allinea a sinistra per scorrere meglio
-                        // 3. Stile "Pillola" migliorato
+                        isScrollable: true,
+                        tabAlignment: TabAlignment.start,
                         indicator: BoxDecoration(
                           borderRadius: BorderRadius.circular(20),
-                          color: const Color(0xFF2E7D32), // Verde scuro
+                          color: const Color(0xFF2E7D32),
                         ),
                         indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor:
-                            Colors.transparent, // Rimuove la riga sotto
-                        // Colori testo
-                        labelColor: Colors.white, // Testo selezionato
-                        unselectedLabelColor:
-                            Colors.grey[600], // Testo non selezionato
+                        dividerColor: Colors.transparent,
+                        labelColor: Colors.white,
+                        unselectedLabelColor: Colors.grey[600],
                         labelStyle: const TextStyle(
                           fontWeight: FontWeight.bold,
                         ),
-
-                        // Padding interno ai tab per distanziarli
                         padding: const EdgeInsets.symmetric(horizontal: 10),
                         labelPadding: const EdgeInsets.symmetric(
                           horizontal: 12,
                         ),
-
                         tabs: days
                             .map(
-                              (day) => Tab(
-                                text: day
-                                    .substring(0, 3)
-                                    .toUpperCase(), // LUN, MAR...
-                              ),
+                              (day) =>
+                                  Tab(text: day.substring(0, 3).toUpperCase()),
                             )
                             .toList(),
                       ),
@@ -595,29 +600,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 : null,
           ),
         ],
-        body: _currentIndex == 0
-            ? DietView(
-                dietData: dietData,
-                isLoading: isLoading,
-                tabController: _tabController,
-                days: days,
-                activeSwaps: activeSwaps,
-                substitutions: substitutions,
-                pantryItems: pantryItems,
-                isTranquilMode: isTranquilMode,
-                onConsume: _consumeFood,
-                onEdit: _editMealItem,
-                onSwap: _showSubstitutions,
-              )
-            : PantryView(
-                pantryItems: pantryItems,
-                onAddManual: _addOrUpdatePantry,
-                onRemove: (i) {
-                  setState(() => pantryItems.removeAt(i));
-                  _saveLocalData();
-                },
-                onScanTap: _scanReceiptAction,
-              ),
+        body: _buildBodyContent(),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
@@ -635,8 +618,50 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             selectedIcon: Icon(Icons.kitchen, color: Colors.green),
             label: 'Frigo',
           ),
+          NavigationDestination(
+            icon: Icon(Icons.shopping_cart_outlined),
+            selectedIcon: Icon(Icons.shopping_cart, color: Colors.green),
+            label: 'Lista',
+          ),
         ],
       ),
     );
+  }
+
+  Widget _buildBodyContent() {
+    if (_currentIndex == 0) {
+      return DietView(
+        dietData: dietData,
+        isLoading: isLoading,
+        tabController: _tabController,
+        days: days,
+        activeSwaps: activeSwaps,
+        substitutions: substitutions,
+        pantryItems: pantryItems,
+        isTranquilMode: isTranquilMode,
+        onConsume: _consumeFood,
+        onEdit: _editMealItem,
+        onSwap: _showSubstitutions,
+      );
+    } else if (_currentIndex == 1) {
+      return PantryView(
+        pantryItems: pantryItems,
+        onAddManual: _addOrUpdatePantry,
+        onRemove: (i) {
+          setState(() => pantryItems.removeAt(i));
+          _saveLocalData();
+        },
+        onScanTap: _scanReceiptAction,
+      );
+    } else {
+      return ShoppingListView(
+        shoppingList: shoppingList,
+        dietData: dietData,
+        onUpdateList: (newList) {
+          setState(() => shoppingList = newList);
+          _saveLocalData();
+        },
+      );
+    }
   }
 }
