@@ -15,9 +15,63 @@ DIET_PDF_PATH = "temp_dieta.pdf"
 RECEIPT_PATH = "temp_scontrino"
 DIET_JSON_PATH = "dieta.json"
 
+def convert_to_app_format(gemini_data):
+    """
+    Traduce l'output di Gemini (Lista di Giorni) nel formato Mappa 
+    che l'App Flutter si aspetta:
+    Input: [ {"giorno": "Lunedì", "pasti": [...]}, ... ]
+    Output: { "Lunedì": { "Pranzo": [ {"name": "Pasta", "qty": "100g"}, ... ] }, ... }
+    """
+    app_data = {}
+    
+    # Se gemini_data è vuoto o None, restituiamo dict vuoto
+    if not gemini_data:
+        return {}
+
+    for giorno in gemini_data:
+        # Prende il nome del giorno (es. "Lunedì")
+        day_name = giorno.get('giorno', 'Sconosciuto').strip()
+        
+        # Inizializza la mappa per quel giorno
+        app_data[day_name] = {}
+        
+        # Itera sui pasti (Colazione, Pranzo, etc.)
+        for pasto in giorno.get('pasti', []):
+            meal_name = pasto.get('tipo_pasto', 'Altro')
+            items = []
+            
+            # Itera sui piatti di quel pasto
+            for piatto in pasto.get('elenco_piatti', []):
+                
+                # Caso 1: Piatto Composto (es. Pasta al sugo)
+                if piatto.get('tipo') == 'composto':
+                    # 1. Aggiunge il TITOLO del piatto (senza quantità)
+                    items.append({
+                        "name": piatto['nome_piatto'],
+                        "qty": "" 
+                    })
+                    # 2. Aggiunge gli INGREDIENTI sotto come voci elenco puntato
+                    for ing in piatto.get('ingredienti', []):
+                        items.append({
+                            "name": f"• {ing['nome']}",
+                            "qty": ing['quantita']
+                        })
+                
+                # Caso 2: Alimento Singolo (es. Mela)
+                else:
+                    items.append({
+                        "name": piatto['nome_piatto'],
+                        "qty": piatto.get('quantita_totale', '')
+                    })
+            
+            # Assegna la lista di cibi a quel pasto
+            app_data[day_name][meal_name] = items
+            
+    return app_data
+
 @app.get("/")
 def read_root():
-    return {"status": "Server Attivo (Gemini Edition)! 🚀", "message": "Usa /upload-diet"}
+    return {"status": "Server Attivo e Pronto per l'App! 🚀", "message": "Usa /upload-diet"}
 
 @app.post("/upload-diet")
 async def upload_diet(file: UploadFile = File(...)):
@@ -30,24 +84,30 @@ async def upload_diet(file: UploadFile = File(...)):
         # 1. Inizializza Parser
         parser = DietParser() 
         
-        # 2. Ottieni i dati (Ora restituisce direttamente una lista/dict, non un modello Pydantic)
-        final_data = parser.parse_complex_diet(DIET_PDF_PATH)
+        # 2. Ottieni i dati grezzi da Gemini (che è una LISTA)
+        raw_data = parser.parse_complex_diet(DIET_PDF_PATH)
         
-        # 3. Salva su disco (per debug o uso futuro)
-        # Nota: final_data è già un oggetto Python, possiamo dumpare direttamente
+        # 3. Converti nel formato Mappa per l'App
+        final_data = convert_to_app_format(raw_data)
+        
+        # 4. Salva su disco (per debug)
         with open(DIET_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(final_data, f, indent=2, ensure_ascii=False)
             
-        print("✅ Dieta elaborata da Gemini e salvata.")
+        print("✅ Dieta convertita correttamente nel formato App.")
         
-        # 4. Restituisci al frontend
-        # Avvolgiamo in un oggetto "plan" per compatibilità con il frontend se necessario
-        # Se il tuo frontend si aspetta direttamente la lista dei giorni, usa: return JSONResponse(content=final_data)
-        # Se il frontend si aspetta {"plan": ...}, usa questo:
-        return JSONResponse(content={"plan": final_data})
+        # 5. Restituisci l'oggetto JSON con la chiave "plan"
+        # Questo risolve l'errore List vs Map
+        return JSONResponse(content={
+            "plan": final_data,
+            "substitutions": {} 
+        })
 
     except Exception as e:
-        print(f"❌ Errore: {e}")
+        print(f"❌ Errore durante l'elaborazione: {e}")
+        # Stampiamo l'errore nei log per capire meglio
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/scan-receipt")
