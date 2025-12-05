@@ -56,6 +56,12 @@ class _NotificationSettingsViewState extends State<NotificationSettingsView> {
         }
         return; // <--- Importante: usciamo dalla funzione, lo switch resta spento.
       }
+      if (await Permission.scheduleExactAlarm.isDenied) {
+        // Questo apre direttamente le impostazioni speciali di Android
+        await Permission.scheduleExactAlarm.request();
+        // Opzionale: potresti voler fare un return qui se vuoi costringere l'utente ad attivarlo subito,
+        // ma spesso conviene lasciar proseguire e sperare che l'utente lo attivi.
+      }
     }
 
     // Se arriviamo qui, o stiamo spegnendo, o abbiamo il permesso.
@@ -218,14 +224,23 @@ class _NotificationSettingsViewState extends State<NotificationSettingsView> {
                 const SizedBox(height: 10),
                 ElevatedButton.icon(
                   onPressed: () async {
-                    await NotificationService().showInstantNotification();
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text("Invio test in corso..."),
-                          backgroundColor: Colors.blue,
-                        ),
-                      );
+                    // 1. CHIEDI PERMESSO PRIMA DI INVIARE
+                    bool hasPermission = await NotificationService()
+                        .checkAndRequestPermissions();
+
+                    if (hasPermission) {
+                      await NotificationService().showInstantNotification();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("Invio test in corso..."),
+                            backgroundColor: Colors.blue,
+                          ),
+                        );
+                      }
+                    } else {
+                      // Se negato, mostra avviso
+                      if (context.mounted) _showPermissionDialog();
                     }
                   },
                   icon: const Icon(Icons.notification_important),

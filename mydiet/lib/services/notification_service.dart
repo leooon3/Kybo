@@ -14,24 +14,25 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   Future<void> init() async {
-    // 1. Inizializza il database dei fusi orari
     tz.initializeTimeZones();
-
-    // 2. OTTIENI IL FUSO ORARIO REALE DEL TELEFONO (Es. "Europe/Rome")
     final String timeZoneName = await FlutterTimezone.getLocalTimezone();
-
-    // 3. Imposta la location locale corretta
     tz.setLocalLocation(tz.getLocation(timeZoneName));
 
-    // Configurazione notifiche (il resto del tuo codice era ok)
+    // ANDROID: Usa l'icona di launcher standard che è sicuramente valida
+    // Invece di 'icon', usa '@mipmap/ic_launcher' per sicurezza
     const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('icon'); // Assicurati che l'icona esista!
+        AndroidInitializationSettings('@mipmap/ic_launcher');
 
+    // IOS: Configurazione esplicita per il FOREGROUND
     const DarwinInitializationSettings initializationSettingsDarwin =
         DarwinInitializationSettings(
           requestSoundPermission: true,
           requestBadgePermission: true,
           requestAlertPermission: true,
+          // AGGIUNTE FONDAMENTALI PER VEDERE NOTIFICHE A APP APERTA:
+          defaultPresentAlert: true,
+          defaultPresentBadge: true,
+          defaultPresentSound: true,
         );
 
     const InitializationSettings initializationSettings =
@@ -40,8 +41,14 @@ class NotificationService {
           iOS: initializationSettingsDarwin,
         );
 
-    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
-  } // --- PROGRAMMA LA SVEGLIA ---
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      // Opzionale: Gestione click notifica
+      onDidReceiveNotificationResponse: (details) {
+        debugPrint("🔔 Notifica cliccata: ${details.payload}");
+      },
+    );
+  }
 
   Future<void> scheduleMealReminder({
     required int id,
