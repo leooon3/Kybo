@@ -1,0 +1,40 @@
+name: Build iOS Unsigned
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  build_ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Install dependencies
+        run: |
+          cd mydiet
+          flutter pub get
+
+      - name: Build iOS (No Codesign)
+        run: |
+          cd mydiet
+          flutter build ios --release --no-codesign
+
+      - name: Create IPA Payload
+        run: |
+          cd mydiet
+          mkdir Payload
+          mv build/ios/iphoneos/Runner.app Payload/
+          zip -r MyDiet_Unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyDiet-IPA
+          path: mydiet/MyDiet_Unsigned.ipa
