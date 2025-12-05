@@ -532,6 +532,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   // --- COSTRUZIONE UI ---
   @override
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       drawer: Drawer(
@@ -572,105 +573,131 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
-      body: NestedScrollView(
-        headerSliverBuilder: (context, innerBoxIsScrolled) => [
-          SliverAppBar(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-            elevation: 2,
-            forceElevated: innerBoxIsScrolled,
-
-            title: Text(
-              _currentIndex == 0
-                  ? 'MyDiet'
-                  : (_currentIndex == 1 ? 'Dispensa' : 'Lista Spesa'),
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-
-            floating: true,
-            pinned: true,
-
-            actions: [
-              if (_currentIndex == 0)
-                IconButton(
-                  icon: Icon(
-                    isTranquilMode ? Icons.spa : Icons.spa_outlined,
-                    color: isTranquilMode ? Colors.green : Colors.grey,
-                    size: 28,
-                  ),
-                  tooltip: "Modalità Relax",
-                  onPressed: () {
-                    setState(() => isTranquilMode = !isTranquilMode);
-                    ScaffoldMessenger.of(context).removeCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isTranquilMode
-                              ? "Modalità Relax Attiva 🌿"
-                              : "Modalità Standard 🔥",
-                        ),
-                        duration: const Duration(milliseconds: 800),
-                        backgroundColor: isTranquilMode
-                            ? Colors.green[700]
-                            : Colors.blueGrey,
-                      ),
-                    );
-                  },
-                ),
-              if (_currentIndex == 2)
-                IconButton(
-                  icon: const Icon(
-                    Icons.archive_outlined,
+      body: Stack(
+        children: [
+          NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) => [
+              SliverAppBar(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black,
+                elevation: 2,
+                forceElevated: innerBoxIsScrolled,
+                title: Text(
+                  _currentIndex == 0
+                      ? 'MyDiet'
+                      : (_currentIndex == 1 ? 'Dispensa' : 'Lista Spesa'),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
                     color: Colors.black87,
                   ),
-                  tooltip: "Sposta nel frigo",
-                  onPressed:
-                      _moveBoughtItemsToPantry, // Richiama la funzione appena creata
                 ),
-              const SizedBox(width: 8),
+                floating: true,
+                pinned: true,
+                actions: [
+                  if (_currentIndex == 0)
+                    IconButton(
+                      icon: Icon(
+                        isTranquilMode ? Icons.spa : Icons.spa_outlined,
+                        color: isTranquilMode ? Colors.green : Colors.grey,
+                        size: 28,
+                      ),
+                      tooltip: "Modalità Relax",
+                      onPressed: () {
+                        setState(() => isTranquilMode = !isTranquilMode);
+                        ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              isTranquilMode
+                                  ? "Modalità Relax Attiva 🌿"
+                                  : "Modalità Standard 🔥",
+                            ),
+                            duration: const Duration(milliseconds: 800),
+                            backgroundColor: isTranquilMode
+                                ? Colors.green[700]
+                                : Colors.blueGrey,
+                          ),
+                        );
+                      },
+                    ),
+                  if (_currentIndex == 2)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.check_circle,
+                        color: Colors.green,
+                        size: 30,
+                      ),
+                      tooltip: "Sposta nel frigo",
+                      onPressed: _moveBoughtItemsToPantry,
+                    ),
+                  const SizedBox(width: 8),
+                ],
+                bottom: _currentIndex == 0
+                    ? PreferredSize(
+                        preferredSize: const Size.fromHeight(60),
+                        child: Container(
+                          height: 55,
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: TabBar(
+                            controller: _tabController,
+                            isScrollable: true,
+                            tabAlignment: TabAlignment.start,
+                            indicator: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20),
+                              color: const Color(0xFF2E7D32),
+                            ),
+                            indicatorSize: TabBarIndicatorSize.tab,
+                            dividerColor: Colors.transparent,
+                            labelColor: Colors.white,
+                            unselectedLabelColor: Colors.grey[600],
+                            labelStyle: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            labelPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                            ),
+                            tabs: days
+                                .map(
+                                  (day) => Tab(
+                                    text: day.substring(0, 3).toUpperCase(),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
             ],
-
-            bottom: _currentIndex == 0
-                ? PreferredSize(
-                    preferredSize: const Size.fromHeight(60),
-                    child: Container(
-                      height: 55,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: TabBar(
-                        controller: _tabController,
-                        isScrollable: true,
-                        tabAlignment: TabAlignment.start,
-                        indicator: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          color: const Color(0xFF2E7D32),
-                        ),
-                        indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor: Colors.transparent,
-                        labelColor: Colors.white,
-                        unselectedLabelColor: Colors.grey[600],
-                        labelStyle: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        labelPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                        ),
-                        tabs: days
-                            .map(
-                              (day) =>
-                                  Tab(text: day.substring(0, 3).toUpperCase()),
-                            )
-                            .toList(),
+            body: _buildBodyContent(),
+          ),
+          if (isUploading)
+            Container(
+              color: Colors.black.withValues(alpha: 0.5),
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.white),
+                    SizedBox(height: 20),
+                    Text(
+                      "Elaborazione in corso...",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  )
-                : null,
-          ),
+                    Text(
+                      "Potrebbe richiedere un paio di minuti",
+                      style: TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
-        body: _buildBodyContent(),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
