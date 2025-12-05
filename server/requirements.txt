@@ -5,3 +5,5 @@ pdfplumber
 thefuzz
 Pillow
 pytesseract
+google-generativeai
+pydantic
