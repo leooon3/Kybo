@@ -8,6 +8,8 @@ class ShoppingListView extends StatefulWidget {
   final Map<String, ActiveSwap> activeSwaps;
   final List<PantryItem> pantryItems;
   final Function(List<String>) onUpdateList;
+  final Function(String name, double qty, String unit)
+  onAddToPantry; // New callback
 
   const ShoppingListView({
     super.key,
@@ -16,6 +18,7 @@ class ShoppingListView extends StatefulWidget {
     required this.activeSwaps,
     required this.pantryItems,
     required this.onUpdateList,
+    required this.onAddToPantry,
   });
 
   @override
@@ -163,11 +166,9 @@ class _ShoppingListViewState extends State<ShoppingListView> {
   void _generateListFromSelection() {
     if (_selectedMealKeys.isEmpty) return;
 
-    // Map structure: Name -> {qty: double, unit: String}
     Map<String, Map<String, dynamic>> neededItems = {};
 
     try {
-      // 1. Aggregate all needed items from the Diet Plan
       for (String key in _selectedMealKeys) {
         var parts = key.split('_');
         var day = parts[0];
@@ -176,7 +177,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
         List<dynamic>? foods = widget.dietData![day]?[meal];
         if (foods == null) continue;
 
-        // Grouping logic (headers handling)
         List<List<dynamic>> groupedFoods = [];
         List<dynamic> currentGroup = [];
 
@@ -198,7 +198,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
         }
         if (currentGroup.isNotEmpty) groupedFoods.add(List.from(currentGroup));
 
-        // Process Groups and Swaps
         for (int i = 0; i < groupedFoods.length; i++) {
           var group = groupedFoods[i];
           String swapKey = "${day}_${meal}_group_$i";
@@ -218,7 +217,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
 
           for (var food in itemsToAdd) {
             String qtyStr = food['qty']?.toString() ?? "";
-            // Ignoriamo gli header (qty N/A) a meno che non siano piatti unici sostituiti
             if (qtyStr == "N/A" && itemsToAdd.length > 1) continue;
             _addToAggregator(neededItems, food['name'], qtyStr);
           }
@@ -232,7 +230,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
       return;
     }
 
-    // 2. Subtract Pantry Items
     List<String> newList = List.from(widget.shoppingList);
     int addedCount = 0;
 
@@ -241,15 +238,13 @@ class _ShoppingListViewState extends State<ShoppingListView> {
       String unit = data['unit'];
       String cleanNameLower = name.trim().toLowerCase();
 
-      // Find in Pantry
-      // Logic: Matches name AND unit.
-      var pantryMatch = widget.pantryItems
-          .where(
-            (p) =>
-                p.name.toLowerCase().trim() == cleanNameLower &&
-                p.unit.toLowerCase() == unit.toLowerCase(),
-          )
-          .firstOrNull;
+      var pantryMatch = widget.pantryItems.where((p) {
+        String pName = p.name.trim().toLowerCase();
+        if (pName == cleanNameLower) return true;
+        if (cleanNameLower.contains(pName)) return true;
+        if (pName.contains(cleanNameLower)) return true;
+        return false;
+      }).firstOrNull;
 
       double existingQty = pantryMatch?.quantity ?? 0.0;
       double finalQty = neededQty - existingQty;
@@ -263,7 +258,7 @@ class _ShoppingListViewState extends State<ShoppingListView> {
             ? name
             : "$name ($displayQty $unit)";
 
-        if (!newList.contains(entry)) {
+        if (!newList.any((e) => e.startsWith(name) || e == entry)) {
           newList.add(entry);
           addedCount++;
         }
@@ -296,33 +291,102 @@ class _ShoppingListViewState extends State<ShoppingListView> {
       String numPart = match.group(1)!.replaceAll(',', '.');
       qty = double.tryParse(numPart) ?? 0.0;
       unit = qtyStr.replaceAll(match.group(0)!, '').trim();
+      if (name.toLowerCase().contains(unit.toLowerCase()) && unit.length > 2) {
+        unit = "";
+      }
     } else {
       unit = qtyStr;
     }
 
     String cleanName = name.trim();
-    // Use name as key to aggregate same items, store unit
-    if (agg.containsKey(cleanName) && agg[cleanName]!['unit'] == unit) {
+    if (agg.containsKey(cleanName)) {
       agg[cleanName]!['qty'] += qty;
+      if (agg[cleanName]!['unit'] == "" && unit.isNotEmpty) {
+        agg[cleanName]!['unit'] = unit;
+      }
     } else {
-      // Handle simple case: if unit mismatch or new item, just overwrite or add.
-      // For a robust app, you'd need unit conversion.
       agg[cleanName] = {'qty': qty, 'unit': unit};
+    }
+  }
+
+  // --- NEW: Move to Fridge Logic ---
+  void _moveCheckedToPantry() {
+    int count = 0;
+    List<String> newList = [];
+
+    for (String item in widget.shoppingList) {
+      if (item.startsWith("OK_")) {
+        String content = item.substring(3); // Remove "OK_"
+
+        // Regex to parse "Name (100.0 g)"
+        // Group 1: Name, Group 2: Qty, Group 3: Unit
+        final RegExp regExp = RegExp(r'^(.*?) \((\d+(?:[.,]\d+)?)\s*(.*)\)$');
+        final match = regExp.firstMatch(content);
+
+        String name = content;
+        double qty = 1.0;
+        String unit = "pz";
+
+        if (match != null) {
+          name = match.group(1)!.trim();
+          String qtyStr = match.group(2)!.replaceAll(',', '.');
+          qty = double.tryParse(qtyStr) ?? 1.0;
+          unit = match.group(3)!.trim();
+        }
+
+        widget.onAddToPantry(name, qty, unit);
+        count++;
+      } else {
+        newList.add(item);
+      }
+    }
+
+    if (count > 0) {
+      widget.onUpdateList(newList);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Spostati $count prodotti nel frigo! 🏠")),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Seleziona prima i prodotti comprati!")),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    bool hasCheckedItems = widget.shoppingList.any((i) => i.startsWith("OK_"));
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showImportDialog,
-        backgroundColor: Colors.indigo,
-        icon: const Icon(Icons.auto_awesome, color: Colors.white),
-        label: const Text(
-          "Importa da Dieta",
-          style: TextStyle(color: Colors.white),
-        ),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasCheckedItems)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16.0),
+              child: FloatingActionButton.extended(
+                heroTag: "moveToPantry",
+                onPressed: _moveCheckedToPantry,
+                backgroundColor: Colors.orange[700],
+                icon: const Icon(Icons.kitchen, color: Colors.white),
+                label: const Text(
+                  "Sposta nel Frigo",
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+          FloatingActionButton.extended(
+            heroTag: "importDiet",
+            onPressed: _showImportDialog,
+            backgroundColor: Colors.indigo,
+            icon: const Icon(Icons.auto_awesome, color: Colors.white),
+            label: const Text(
+              "Importa da Dieta",
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
       ),
       body: widget.shoppingList.isEmpty
           ? Center(
@@ -343,7 +407,7 @@ class _ShoppingListViewState extends State<ShoppingListView> {
               ),
             )
           : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
               itemCount: widget.shoppingList.length,
               separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (context, index) {

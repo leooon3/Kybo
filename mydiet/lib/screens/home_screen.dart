@@ -332,10 +332,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           shoppingList: provider.shoppingList,
           dietData: provider.dietData,
           activeSwaps: provider.activeSwaps,
-          pantryItems: provider.pantryItems, // Added parameter
-          onUpdateList: (list) {
-            provider.updateShoppingList(list);
-          },
+          pantryItems: provider.pantryItems,
+          onUpdateList: provider.updateShoppingList,
+          // [NEW] Callback for adding to pantry
+          onAddToPantry: provider.addPantryItem,
         );
       default:
         return const SizedBox.shrink();
