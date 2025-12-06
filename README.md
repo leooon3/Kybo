@@ -1,95 +1,82 @@
-# 🍃 NutriScan - La Tua Dieta Intelligente
+NutriScan
+Sistema digitale per la gestione della dieta e della dispensa. Converte i piani nutrizionali PDF in programmi interattivi e automatizza la lista della spesa tramite la scansione degli scontrini.
 
-**NutriScan** è un'applicazione mobile innovativa che digitalizza la tua dieta cartacea e gestisce automaticamente la tua dispensa. Grazie all'intelligenza artificiale, trasforma i PDF del nutrizionista e le foto degli scontrini in un piano alimentare interattivo e una lista della spesa automatica.
+Funzionalità
+Parsing Dieta PDF: Estrae pasti, quantità e giorni da file PDF non strutturati utilizzando l'IA di Gemini.
 
----
+Scanner Scontrini: Aggiunge prodotti al "Frigo Virtuale" tramite OCR e corrispondenza fuzzy delle stringhe (fuzzy matching).
 
-## ✨ Funzionalità Chiave
+Lista Spesa Intelligente: Calcola gli articoli necessari sottraendo l'inventario della dispensa dal piano dietetico.
 
-- 📄 **Parsing Dieta PDF:** Carica il file del nutrizionista e l'app estrarrà automaticamente pasti, quantità e giorni.
-- 🧾 **Scanner Scontrino:** Fai una foto allo scontrino e l'app aggiungerà i prodotti compatibili direttamente al tuo "Frigo Virtuale".
-- 🥦 **Modalità Relax:** Nasconde i grammi di frutta e verdura per ridurre lo stress, suggerendo porzioni "a volontà" o "1 frutto".
-- 🔄 **Sostituzioni Smart:** Clicca su un alimento per vedere le alternative consentite (basate sui codici CAD della dieta).
-- 🛒 **Lista Spesa Automatica:** Calcola cosa ti manca in base ai pasti dei prossimi giorni e a cosa hai già in dispensa.
-- ✏️ **Modifica Rapida:** Correggi manualmente nomi o quantità se l'AI ha sbagliato a leggere.
+Sostituzione Pasti: Suggerisce alternative basate sui codici di composizione degli alimenti (CAD).
 
----
+Modalità Relax: Attiva o disattiva la visibilità delle grammature specifiche per ridurre lo stress.
 
-## 🚀 Installazione
+Multipiattaforma: Sviluppato con Flutter (Mobile/Web/Desktop) e Python (FastAPI).
 
-Il progetto è diviso in due parti: il **Cervello (Backend Python)** che elabora i dati e l'**App (Frontend Flutter)** che usi sul telefono.
+Stack Tecnologico
+Frontend: Flutter, Provider (Gestione dello Stato), HTTP.
 
-### 1. Requisiti
+Backend: Python, FastAPI, Uvicorn.
 
-- **Python 3.8+** installato sul PC.
-- **Flutter SDK** installato e configurato.
-- **Tesseract OCR** installato sul PC (per leggere gli scontrini).
+AI/OCR: Google Gemini (Parsing PDF), Tesseract OCR (Scontrini), TheFuzz (Matching stringhe).
 
-### 2. Configurazione Backend (Python)
+Installazione
+1. Backend (Server)
+Naviga nella cartella server/.
 
-Il backend si trova nella cartella `test/`.
+Requisiti:
 
-1.  Installa le dipendenze Python:
-    ```bash
-    pip install fastapi uvicorn pdfplumber pytesseract pillow thefuzz python-multipart
-    ```
-2.  Assicurati di avere `tesseract` installato (su Windows di solito in `C:\Program Files\Tesseract-OCR`).
+Python 3.9+
 
-### 3. Configurazione Frontend (Flutter)
+Tesseract OCR installato sul sistema host.
 
-L'app si trova nella cartella `diet_app/`.
+Setup:
 
-1.  Installa le dipendenze Flutter:
-    ```bash
-    cd diet_app
-    flutter pub get
-    ```
-2.  **IMPORTANTE:** Apri il file `lib/main.dart` e cerca la riga `const String serverUrl`. Sostituisci l'indirizzo IP con l'indirizzo IP locale del tuo computer (es. `http://192.168.1.15:8000`).
+Bash
 
----
+cd server
+pip install -r requirements.txt
+Configurazione: Crea un file .env nella cartella server/:
 
-## ▶️ Come Avviare il Progetto
+Ini, TOML
 
-### Passo 1: Avvia il Cervello (Server)
+GOOGLE_API_KEY=la_tua_chiave_api_gemini
+Esecuzione:
 
-Apri un terminale nella cartella `test` ed esegui:
+Bash
 
-```bash
-python server.py
-Il server partirà su https://www.google.com/search?q=http://0.0.0.0:8000 e sarà pronto a ricevere file.
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+2. Frontend (App)
+Naviga nella cartella mydiet/.
 
-Passo 2: Avvia l'App
-Collega il tuo telefono Android (con Debug USB attivo) o usa un emulatore. Apri un altro terminale nella cartella diet_app ed esegui:
+Setup:
+
+Bash
+
+cd mydiet
+flutter pub get
+Configurazione: Assicurati che lib/core/env.dart (o il file .env lato client) punti all'indirizzo IP corretto del backend (default: http://10.0.2.2:8000 per l'emulatore Android o il tuo IP locale).
+
+Esecuzione:
 
 Bash
 
 flutter run
-📖 Guida all'Uso
-Primo Avvio: Apri il menu laterale (in alto a sinistra) e premi "Carica Nuova Dieta PDF". Seleziona il file PDF del nutrizionista.
+Utilizzo
+Carica Dieta: Apri il menu laterale, seleziona "Carica Dieta PDF". Carica il file fornito dal nutrizionista.
 
-Gestione Pasti: Scorri i giorni. Se un alimento non ti va, premi l'icona Swap (frecce) per cambiarlo. Tieni premuto su un cibo per modificarlo manualmente (matita).
+Riempi la Dispensa: Vai su "Dispensa". Aggiungi articoli manualmente o tocca l'icona Fotocamera per scansionare uno scontrino (Immagine o PDF).
 
-Dispensa: Vai nella tab "Dispensa". Aggiungi cibi manualmente o premi "Scan Scontrino" per caricare una foto o un PDF della spesa.
+Genera Lista: Vai su "Lista". Seleziona i giorni o i pasti desiderati. Il sistema controlla la dispensa ed elenca solo ciò che manca.
 
-Mangiare: Quando mangi un pasto, clicca sul pallino accanto al cibo. Se l'alimento è in dispensa, verrà scalato automaticamente e apparirà una spunta verde ✅.
+Gestisci Pasti: Tocca le frecce per sostituire i pasti con alternative valide. Tieni premuto su un piatto per modificarne i dettagli. Tocca la casella di controllo per segnarlo come consumato.
 
-Lista Spesa: Premi il carrello 🛒 in alto a destra. Scegli per quanti giorni vuoi comprare e l'app ti dirà esattamente cosa manca.
+Struttura del Progetto
+mydiet/: Codice dell'applicazione Flutter.
 
-🛠️ Struttura del Progetto
-test/
+server/: Backend Python FastAPI.
 
-server.py: Il server API che riceve i file.
+app/services/diet_service.py: Interazione con LLM per il parsing del PDF.
 
-diet_parser.py: Motore di analisi del PDF della dieta (con regex avanzate).
-
-receipt_scanner.py: Motore OCR per leggere gli scontrini e filtrarli.
-
-diet_app/
-
-lib/main.dart: Tutto il codice dell'interfaccia Flutter.
-
-assets/: Cartella dove vengono salvati temporaneamente i JSON (se usati localmente).
-
-👨‍💻 Crediti
-Sviluppato da Riccardo Leone.
-```
+app/services/receipt_service.py: Logica OCR e algoritmo di matching fuzzy.
