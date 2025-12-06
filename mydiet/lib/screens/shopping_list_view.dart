@@ -184,14 +184,16 @@ class _ShoppingListViewState extends State<ShoppingListView> {
           String qty = food['qty']?.toString() ?? "";
           bool isHeader = qty == "N/A";
           if (isHeader) {
-            if (currentGroup.isNotEmpty)
+            if (currentGroup.isNotEmpty) {
               groupedFoods.add(List.from(currentGroup));
+            }
             currentGroup = [food];
           } else {
-            if (currentGroup.isNotEmpty)
+            if (currentGroup.isNotEmpty) {
               currentGroup.add(food);
-            else
+            } else {
               groupedFoods.add([food]);
+            }
           }
         }
         if (currentGroup.isNotEmpty) groupedFoods.add(List.from(currentGroup));
