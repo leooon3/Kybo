@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../providers/diet_provider.dart';
 import '../models/active_swap.dart';
+import '../services/api_client.dart'; // For error types
 import 'diet_view.dart';
 import 'pantry_view.dart';
+import 'notifications_screen.dart'; // [ADDED]
 import 'shopping_list_view.dart';
 
 class MainScreen extends StatefulWidget {
@@ -59,7 +61,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         );
       } catch (e) {
         if (mounted) {
-          scaffoldMessenger.showSnackBar(SnackBar(content: Text("Errore: $e")));
+          String errorMessage = "Errore sconosciuto";
+          if (e is ApiException) {
+            errorMessage = "Errore Server (${e.statusCode}): ${e.message}";
+          } else if (e is NetworkException) {
+            errorMessage = "Errore di rete. Controlla la connessione.";
+          }
+
+          scaffoldMessenger.showSnackBar(
+            SnackBar(content: Text(errorMessage), backgroundColor: Colors.red),
+          );
         }
       }
     }
@@ -71,17 +82,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     String name,
     String dietQtyString,
   ) {
-    // Regex basic to parse "100g" -> 100.0
-    final regExp = RegExp(r'(\d+(?:[.,]\d+)?)');
-    final match = regExp.firstMatch(dietQtyString);
-    double qtyToEat = match != null
-        ? double.parse(match.group(1)!.replaceAll(',', '.'))
-        : 1.0;
-
-    // Heuristic: if "g" is in string use 'g', else 'pz'
-    String unit = dietQtyString.contains('g') ? 'g' : 'pz';
-
-    provider.consumeItem(name, qtyToEat, unit);
+    // [FIX] Logic moved to provider
+    provider.consumeSmart(name, dietQtyString);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -225,6 +227,21 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               title: const Text("Carica Dieta PDF"),
               onTap: () => _uploadDiet(context),
             ),
+            // [ADDED] Notifications Link
+            ListTile(
+              leading: const Icon(Icons.notifications),
+              title: const Text("Impostazioni Notifiche"),
+              onTap: () {
+                Navigator.pop(context); // Close drawer
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationsScreen(),
+                  ),
+                );
+              },
+            ),
+            const Divider(),
             ListTile(
               leading: const Icon(Icons.delete, color: Colors.red),
               title: const Text("Reset Dati"),
@@ -334,7 +351,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           activeSwaps: provider.activeSwaps,
           pantryItems: provider.pantryItems,
           onUpdateList: provider.updateShoppingList,
-          // [NEW] Callback for adding to pantry
+          // Callback for adding to pantry
           onAddToPantry: provider.addPantryItem,
         );
       default:

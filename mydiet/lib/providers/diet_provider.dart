@@ -90,11 +90,26 @@ class DietProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // [RESTORED]
   void removePantryItem(int index) {
     _pantryItems.removeAt(index);
     _storage.savePantry(_pantryItems);
     notifyListeners();
+  }
+
+  // [FIX] New method to handle logic previously in UI
+  void consumeSmart(String name, String rawQtyString) {
+    // Regex to parse "100g", "100,5", "100" -> 100.0
+    final regExp = RegExp(r'(\d+(?:[.,]\d+)?)');
+    final match = regExp.firstMatch(rawQtyString);
+
+    double qtyToEat = match != null
+        ? double.parse(match.group(1)!.replaceAll(',', '.'))
+        : 1.0;
+
+    // Heuristic: if "g" is in string use 'g', else 'pz'
+    String unit = rawQtyString.contains('g') ? 'g' : 'pz';
+
+    consumeItem(name, qtyToEat, unit);
   }
 
   void consumeItem(String name, double qty, String unit) {
@@ -112,7 +127,6 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
-  // [RESTORED]
   void updateDietMeal(
     String day,
     String mealName,

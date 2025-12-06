@@ -1,8 +1,8 @@
 import google.generativeai as genai
 import typing_extensions as typing
-import os
 import json
 import pdfplumber
+from app.core.config import settings
 
 # --- SCHEMI DATI ---
 class Ingrediente(typing.TypedDict):
@@ -39,10 +39,12 @@ class OutputDietaCompleto(typing.TypedDict):
 
 class DietParser:
     def __init__(self):
-        api_key = os.environ.get("GOOGLE_API_KEY")
+        # [FIX] Use settings instead of os.environ directly
+        api_key = settings.GOOGLE_API_KEY
         if not api_key:
-            print("❌ ERRORE CRITICO: GOOGLE_API_KEY non trovata!")
+            print("❌ ERRORE CRITICO: GOOGLE_API_KEY non trovata nelle impostazioni!")
         else:
+            # Clean key just in case
             clean_key = api_key.strip().replace('"', '').replace("'", "")
             genai.configure(api_key=clean_key)
 
@@ -74,7 +76,7 @@ class DietParser:
         try:
             with pdfplumber.open(pdf_path) as pdf:
                 for page in pdf.pages:
-                    # Estraiamo il testo mantenendo il layout visivo per aiutare a capire le colonne
+                    # Estraiamo il testo mantenendo il layout visivo
                     extracted = page.extract_text(layout=True) 
                     if extracted:
                         text += extracted + "\n"
@@ -88,8 +90,8 @@ class DietParser:
         if not diet_text:
             raise ValueError("PDF vuoto.")
 
-        # Usiamo gemini-2.5-flash che dal tuo log precedente risulta disponibile e performante
-        model_name = "gemini-2.5-flash" 
+        # [FIX] Use model from settings
+        model_name = settings.GEMINI_MODEL
         
         try:
             print(f"🤖 Analisi Gemini ({model_name})...")
