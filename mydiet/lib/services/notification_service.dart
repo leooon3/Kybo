@@ -21,8 +21,7 @@ class NotificationService {
 
     // Android Settings
     const AndroidInitializationSettings initializationSettingsAndroid =
-        // Just the name, no extension, no @mipmap/
-        AndroidInitializationSettings('launcher_icon');
+        AndroidInitializationSettings('@mipmap/launcher_icon');
 
     // iOS Settings
     const DarwinInitializationSettings initializationSettingsDarwin =
