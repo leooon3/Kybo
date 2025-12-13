@@ -15,14 +15,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1. Setup Java (Often required by Flutter/Gradle even for iOS tasks)
+      # 1. Setup Environment (Java & Ruby)
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: "zulu"
           java-version: "17"
 
-      # 2. Setup Ruby (Ensures correct CocoaPods environment)
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -35,8 +34,7 @@ jobs:
           channel: "stable"
           cache: true
 
-      # 3. FIX: Create Dummy GoogleService-Info.plist
-      # Required because firebase_core will crash the build if this file is missing from the project references.
+      # 2. Create Dummy GoogleService-Info.plist (Required for Firebase init)
       - name: Create Dummy GoogleService-Info.plist
         run: |
           cat <<EOF > ios/Runner/GoogleService-Info.plist
@@ -75,43 +73,48 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      # 4. FIX: Disable Signing & Entitlements Checks
-      # This modifies the Xcode project to stop it from asking for a Provisioning Profile.
-      - name: Disable Signing in Xcode Project
+      # 3. CRITICAL FIX: Disable Signing in Xcode Project & Configs
+      - name: Disable Signing
         run: |
-          cd ios/Runner.xcodeproj
-          # Force Manual Signing (stops Xcode from trying to "phone home" for profiles)
-          sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/' project.pbxproj
-          # Remove Development Team ID
-          sed -i '' 's/DevelopmentTeam = [^;]*;/DevelopmentTeam = "";/' project.pbxproj
-          # Remove Code Signing Entitlements (Fixes "Invalid Entitlements" error during build)
-          sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' project.pbxproj
-          cd ../..
+          cd ios
 
-      # 5. FIX: Update Podfile & Install Pods
+          # A. Modify project.pbxproj
+          # Change CODE_SIGN_STYLE from Automatic to Manual (This was the missing key fix)
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
+          # Remove Development Team
+          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
+          # Remove Provisioning Profile Specifier
+          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' Runner.xcodeproj/project.pbxproj
+          # Remove Entitlements (Prevents "entitlements are not valid" error)
+          sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' Runner.xcodeproj/project.pbxproj
+
+          # B. Force settings in Release.xcconfig (Strongest Override)
+          echo "" >> Flutter/Release.xcconfig
+          echo "CODE_SIGNING_ALLOWED=NO" >> Flutter/Release.xcconfig
+          echo "CODE_SIGNING_REQUIRED=NO" >> Flutter/Release.xcconfig
+          echo "CODE_SIGN_IDENTITY=" >> Flutter/Release.xcconfig
+          echo "CODE_SIGN_STYLE=Manual" >> Flutter/Release.xcconfig
+
+          cd ..
+
+      # 4. Update Pods
       - name: Update Pods
         run: |
           cd ios
-          # Ensure platform is set to iOS 14
-          sed -i '' "s/^# platform :ios, '.*'/platform :ios, '14.0'/" Podfile
-          sed -i '' "s/^platform :ios, '.*'/platform :ios, '14.0'/" Podfile
-          # Install Pods
+          # Force iOS 13.0+ (Firebase requirement)
+          sed -i '' "s/^# platform :ios, '.*'/platform :ios, '13.0'/" Podfile
+          sed -i '' "s/^platform :ios, '.*'/platform :ios, '13.0'/" Podfile
           pod install --repo-update
           cd ..
 
-      # 6. Build iOS (Unsigned)
-      # We use export variables to override Xcode settings during the build command.
+      # 5. Build iOS (Unsigned)
       - name: Build iOS App
         run: |
-          export CODE_SIGNING_ALLOWED=NO
-          export CODE_SIGNING_REQUIRED=NO
-          export CODE_SIGN_IDENTITY=""
-
+          # Pass xcargs to forcefully disable signing during the build command
           flutter build ios --release --no-codesign --no-pub \
-            --build-name=1.0.0 \
-            --build-number=1
+            --xcargs "CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' CODE_SIGN_STYLE=Manual"
 
-      # 7. Package IPA
+      # 6. Package IPA
       - name: Create IPA Payload
         run: |
           mkdir -p Payload
