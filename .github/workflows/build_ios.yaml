@@ -60,7 +60,7 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # 2. FIX: Force iOS 14.0 in Podfile (Required by workmanager_apple)
+      # 2. FIX: Force iOS 14.0 in Podfile
       - name: Update Podfile Platform
         run: |
           cd ios
@@ -68,23 +68,24 @@ jobs:
           sed -i '' "s/^platform :ios, '.*'/platform :ios, '14.0'/" Podfile
           cd ..
 
-      # 3. FIX: AGGRESSIVE Signing Disabling
-      # We modify project.pbxproj directly to switch to Manual signing and remove any Team ID.
-      # We also modify Release.xcconfig to forcibly disable signing and entitlements.
-      - name: Disable Signing & Entitlements
+      # 3. FIX: Nuke Signing AND Entitlements
+      # We remove the reference to the entitlements file. This stops Xcode from checking for Push Notification signing rights.
+      - name: Remove Entitlements & Disable Signing
         run: |
-          # 1. Modify Project Settings (switch to Manual, remove Team)
           cd ios/Runner.xcodeproj
+          # 1. Switch to Manual Signing
           sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/' project.pbxproj
+          # 2. Remove Development Team
           sed -i '' 's/DevelopmentTeam = [^;]*;/DevelopmentTeam = "";/' project.pbxproj
+          # 3. Remove Code Sign Entitlements (CRITICAL FIX for Push Notifications error)
+          sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' project.pbxproj
           cd ../..
 
-          # 2. Modify XCConfig to block signing and strip entitlements (fixes Push Notification error)
+          # 4. Force build settings in XCConfig as a fallback
           echo "CODE_SIGNING_ALLOWED = NO" >> ios/Flutter/Release.xcconfig
           echo "CODE_SIGNING_REQUIRED = NO" >> ios/Flutter/Release.xcconfig
           echo "CODE_SIGN_IDENTITY = " >> ios/Flutter/Release.xcconfig
           echo "CODE_SIGN_ENTITLEMENTS = " >> ios/Flutter/Release.xcconfig
-          echo "PROVISIONING_PROFILE_SPECIFIER = " >> ios/Flutter/Release.xcconfig
 
       - name: Install Pods
         run: |
