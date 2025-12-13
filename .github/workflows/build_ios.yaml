@@ -15,13 +15,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 1. Setup Java (Often required by Flutter/Gradle even for iOS tasks)
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      # 2. Setup Ruby (Ensures correct CocoaPods environment)
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: "stable"
           cache: true
 
-      # 1. FIX: Create Dummy GoogleService-Info.plist (Required by Firebase)
+      # 3. FIX: Create Dummy GoogleService-Info.plist
+      # Required because firebase_core will crash the build if this file is missing from the project references.
       - name: Create Dummy GoogleService-Info.plist
         run: |
           cat <<EOF > ios/Runner/GoogleService-Info.plist
@@ -57,49 +72,49 @@ jobs:
           </plist>
           EOF
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: flutter pub get
 
-      # 2. FIX: Force iOS 14.0 in Podfile
-      - name: Update Podfile Platform
-        run: |
-          cd ios
-          sed -i '' "s/^# platform :ios, '.*'/platform :ios, '14.0'/" Podfile
-          sed -i '' "s/^platform :ios, '.*'/platform :ios, '14.0'/" Podfile
-          cd ..
-
-      # 3. FIX: Nuke Signing AND Entitlements
-      # We remove the reference to the entitlements file. This stops Xcode from checking for Push Notification signing rights.
-      - name: Remove Entitlements & Disable Signing
+      # 4. FIX: Disable Signing & Entitlements Checks
+      # This modifies the Xcode project to stop it from asking for a Provisioning Profile.
+      - name: Disable Signing in Xcode Project
         run: |
           cd ios/Runner.xcodeproj
-          # 1. Switch to Manual Signing
+          # Force Manual Signing (stops Xcode from trying to "phone home" for profiles)
           sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/' project.pbxproj
-          # 2. Remove Development Team
+          # Remove Development Team ID
           sed -i '' 's/DevelopmentTeam = [^;]*;/DevelopmentTeam = "";/' project.pbxproj
-          # 3. Remove Code Sign Entitlements (CRITICAL FIX for Push Notifications error)
+          # Remove Code Signing Entitlements (Fixes "Invalid Entitlements" error during build)
           sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' project.pbxproj
           cd ../..
 
-          # 4. Force build settings in XCConfig as a fallback
-          echo "CODE_SIGNING_ALLOWED = NO" >> ios/Flutter/Release.xcconfig
-          echo "CODE_SIGNING_REQUIRED = NO" >> ios/Flutter/Release.xcconfig
-          echo "CODE_SIGN_IDENTITY = " >> ios/Flutter/Release.xcconfig
-          echo "CODE_SIGN_ENTITLEMENTS = " >> ios/Flutter/Release.xcconfig
-
-      - name: Install Pods
+      # 5. FIX: Update Podfile & Install Pods
+      - name: Update Pods
         run: |
           cd ios
+          # Ensure platform is set to iOS 14
+          sed -i '' "s/^# platform :ios, '.*'/platform :ios, '14.0'/" Podfile
+          sed -i '' "s/^platform :ios, '.*'/platform :ios, '14.0'/" Podfile
+          # Install Pods
           pod install --repo-update
           cd ..
 
-      - name: Build iOS (No Codesign)
+      # 6. Build iOS (Unsigned)
+      # We use export variables to override Xcode settings during the build command.
+      - name: Build iOS App
         run: |
-          flutter build ios --release --no-codesign --build-name=1.0.0 --build-number=1 --no-pub
+          export CODE_SIGNING_ALLOWED=NO
+          export CODE_SIGNING_REQUIRED=NO
+          export CODE_SIGN_IDENTITY=""
 
+          flutter build ios --release --no-codesign --no-pub \
+            --build-name=1.0.0 \
+            --build-number=1
+
+      # 7. Package IPA
       - name: Create IPA Payload
         run: |
-          mkdir Payload
+          mkdir -p Payload
           mv build/ios/iphoneos/Runner.app Payload/
           zip -r MyDiet_Unsigned.ipa Payload
 
