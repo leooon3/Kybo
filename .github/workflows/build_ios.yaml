@@ -21,8 +21,6 @@ jobs:
           channel: "stable"
           cache: true
 
-      # FIX: Create a dummy GoogleService-Info.plist to prevent build errors.
-      # (The app will launch, but Firebase features won't work until you provide a real one)
       - name: Create Dummy GoogleService-Info.plist
         run: |
           cat <<EOF > ios/Runner/GoogleService-Info.plist
@@ -61,6 +59,16 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # FIX: Force iOS 14.0 in Podfile to satisfy workmanager_apple requirement
+      - name: Update Podfile Platform
+        run: |
+          cd ios
+          # Uncomment or replace the platform line to set iOS 14.0
+          sed -i '' "s/^# platform :ios, '.*'/platform :ios, '14.0'/" Podfile
+          # Fallback: if line is already uncommented but old version, update it
+          sed -i '' "s/^platform :ios, '.*'/platform :ios, '14.0'/" Podfile
+          cd ..
+
       - name: Install Pods
         run: |
           cd ios
@@ -68,16 +76,13 @@ jobs:
           cd ..
 
       - name: Build iOS (No Codesign)
-        # We explicitly disable signing requirements to ensure it builds on CI
         run: |
           flutter build ios --release --no-codesign
 
       - name: Create IPA Payload
         run: |
           mkdir Payload
-          # Move the built app into the Payload folder
           mv build/ios/iphoneos/Runner.app Payload/
-          # Zip it to create the IPA
           zip -r MyDiet_Unsigned.ipa Payload
 
       - name: Upload IPA
