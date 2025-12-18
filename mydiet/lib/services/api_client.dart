@@ -37,8 +37,9 @@ class ApiClient {
       // --- SECURITY: Aggiungi Token Firebase ---
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        // Modification 2: Force refresh to fix 401 errors
-        final token = await user.getIdToken(true);
+        // [FIX] Use cached token (false) instead of forcing refresh on every call.
+        // The SDK handles expiration automatically.
+        final token = await user.getIdToken(false);
         request.headers['Authorization'] = 'Bearer $token';
       }
       // ----------------------------------------

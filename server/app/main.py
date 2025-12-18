@@ -1,7 +1,7 @@
 import os
 import json
 import uuid
-import shutil
+import aiofiles  # [FIX] Added for async file operations
 from typing import Optional
 
 import firebase_admin
@@ -17,16 +17,14 @@ from app.services.normalization import normalize_meal_name
 # --- FIREBASE SETUP ---
 if not firebase_admin._apps:
     try:
-        # Tries to load the Service Account from GOOGLE_APPLICATION_CREDENTIALS
+        # Standard initialization: uses GOOGLE_APPLICATION_CREDENTIALS env var automatically
         cred = credentials.ApplicationDefault()
         firebase_admin.initialize_app(cred)
-        print("Firebase initialized with Service Account.")
+        print("🔥 Firebase initialized via ApplicationDefault credentials.")
     except Exception as e:
-        print(f"Warning: Could not load Service Account ({e}). Fallback to manual ID.")
-        # FALLBACK: If Env Var is missing, you MUST paste your Project ID below
-        firebase_admin.initialize_app(options={
-            'projectId': 'INSERISCI_QUI_IL_TUO_PROJECT_ID' 
-        })
+        print(f"❌ Critical Firebase Init Error: {e}")
+        # Stop execution or handle gracefully if you have a secondary fallback
+        # Removed hardcoded project ID to prevent production leaks
 
 app = FastAPI()
 
@@ -43,7 +41,7 @@ async def verify_token(authorization: str = Header(...)):
     try:
         decoded_token = auth.verify_id_token(token)
         
-        # ACTIVE MODE: Security Check
+        # Security Check: Ensure email is verified
         if not decoded_token.get('email_verified', False):
             raise HTTPException(status_code=403, detail="Email verification required")
             
@@ -65,9 +63,13 @@ async def upload_diet(
     temp_filename = f"{uuid.uuid4()}.pdf"
     
     try:
-        with open(temp_filename, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # [FIX] Async file write to prevent blocking the event loop
+        async with aiofiles.open(temp_filename, 'wb') as out_file:
+            while content := await file.read(1024 * 1024):  # Read in 1MB chunks
+                await out_file.write(content)
             
+        # Note: Diet parsing is CPU intensive. Ideally, offload to a background task (Celery/RQ)
+        # for production, but this is acceptable for a prototype.
         raw_data = diet_parser.parse_complex_diet(temp_filename)
         final_data = _convert_to_app_format(raw_data)
         
@@ -77,7 +79,7 @@ async def upload_diet(
         return JSONResponse(content=final_data)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Processing Error: {str(e)}")
     finally:
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
@@ -91,12 +93,18 @@ async def scan_receipt(
     temp_filename = f"{uuid.uuid4()}{os.path.splitext(file.filename)[1]}"
     
     try:
-        food_list = json.loads(allowed_foods)
+        try:
+            food_list = json.loads(allowed_foods)
+        except json.JSONDecodeError:
+            raise ValueError("allowed_foods must be a valid JSON string")
+
         if not isinstance(food_list, list):
             raise ValueError("allowed_foods must be a JSON list of strings")
 
-        with open(temp_filename, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # [FIX] Async file write
+        async with aiofiles.open(temp_filename, 'wb') as out_file:
+            while content := await file.read(1024 * 1024):
+                await out_file.write(content)
             
         current_scanner = ReceiptScanner(allowed_foods_list=food_list)
         found_items = current_scanner.scan_receipt(temp_filename)

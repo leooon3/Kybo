@@ -13,10 +13,18 @@ import 'services/inventory_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(fileName: ".env");
+  // [FIX] Safe .env loading. Prevents crash if file is missing (e.g., in CI/CD or Prod)
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    debugPrint(
+      "⚠️ Warning: .env file not found. Ensure environment variables are set.",
+    );
+  }
 
   try {
     await Firebase.initializeApp();
+    // Optional: Subscribe only if platform supports it or after permission check
     await FirebaseMessaging.instance.subscribeToTopic('all_users');
   } catch (e) {
     debugPrint("⚠️ Firebase Init Error: $e");
@@ -53,7 +61,6 @@ class DietApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      // UPDATED: Title changed from 'NutriScan' to 'MyDiet'
       title: 'MyDiet',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
