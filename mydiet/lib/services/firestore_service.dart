@@ -35,4 +35,17 @@ class FirestoreService {
               .toList(),
         );
   }
+
+  // [Add this method inside FirestoreService class]
+  Future<void> deleteDiet(String dietId) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    await _db
+        .collection('users')
+        .doc(user.uid)
+        .collection('diets')
+        .doc(dietId)
+        .delete();
+  }
 }

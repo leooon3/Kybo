@@ -37,6 +37,7 @@ class HistoryScreen extends StatelessWidget {
                 date = (diet['uploadedAt'] as Timestamp).toDate();
               }
 
+              // [Replace the existing ListTile in ListView.builder with this updated version]
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 child: ListTile(
@@ -44,7 +45,46 @@ class HistoryScreen extends StatelessWidget {
                   title: Text(
                     "Dieta del ${DateFormat('dd/MM/yyyy HH:mm').format(date)}",
                   ),
-                  subtitle: const Text("Tocca per ripristinare questo piano"),
+                  subtitle: const Text("Tocca per ripristinare"),
+                  // --- NEW: Add Delete Button ---
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (c) => AlertDialog(
+                          title: const Text("Elimina Dieta"),
+                          content: const Text(
+                            "Sei sicuro di voler eliminare questa versione salvata? L'azione è irreversibile.",
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(c),
+                              child: const Text("Annulla"),
+                            ),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Colors.red,
+                              ),
+                              onPressed: () async {
+                                await firestore.deleteDiet(
+                                  diet['id'],
+                                ); // Calls the new method
+                                Navigator.pop(c);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text("Dieta eliminata."),
+                                  ),
+                                );
+                              },
+                              child: const Text("Elimina"),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                  // ------------------------------
                   onTap: () {
                     showDialog(
                       context: context,
@@ -63,8 +103,8 @@ class HistoryScreen extends StatelessWidget {
                               context.read<DietProvider>().loadHistoricalDiet(
                                 diet,
                               );
-                              Navigator.pop(c); // Close Dialog
-                              Navigator.pop(context); // Close History Screen
+                              Navigator.pop(c);
+                              Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text("Dieta ripristinata!"),
