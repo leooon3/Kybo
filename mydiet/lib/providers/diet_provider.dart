@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../repositories/diet_repository.dart';
 import '../services/storage_service.dart';
+import '../services/firestore_service.dart';
+import '../services/auth_service.dart';
 import '../models/pantry_item.dart';
 import '../models/active_swap.dart';
 
 class DietProvider extends ChangeNotifier {
   final DietRepository _repository;
   final StorageService _storage = StorageService();
+  final FirestoreService _firestore = FirestoreService();
+  final AuthService _auth = AuthService();
 
   Map<String, dynamic>? _dietData;
   Map<String, dynamic>? _substitutions;
@@ -55,10 +59,17 @@ class DietProvider extends ChangeNotifier {
 
       _dietData = result.plan;
       _substitutions = result.substitutions;
+
+      // 1. Save Local
       await _storage.saveDiet({
         'plan': _dietData,
         'substitutions': _substitutions,
       });
+
+      // 2. Save to Cloud History (if logged in)
+      if (_auth.currentUser != null) {
+        await _firestore.saveDietToHistory(_dietData!, _substitutions!);
+      }
     } catch (e) {
       rethrow;
     } finally {
@@ -66,14 +77,26 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
+  // --- NEW: Load from History ---
+  void loadHistoricalDiet(Map<String, dynamic> dietData) {
+    _dietData = dietData['plan'];
+    _substitutions = dietData['substitutions'];
+
+    // Save as current local diet
+    _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
+
+    // Clear old swaps since they might not match
+    _activeSwaps = {};
+    _storage.saveSwaps({});
+
+    notifyListeners();
+  }
+
   Future<int> scanReceipt(String path) async {
     _setLoading(true);
     int count = 0;
     try {
-      // 1. Gather all allowed foods from local state
       List<String> allowedFoods = _extractAllowedFoods();
-
-      // 2. Send Image + List to server
       final items = await _repository.scanReceipt(path, allowedFoods);
 
       for (var item in items) {
@@ -91,7 +114,6 @@ class DietProvider extends ChangeNotifier {
   List<String> _extractAllowedFoods() {
     final Set<String> foods = {};
 
-    // From Plan
     if (_dietData != null) {
       _dietData!.forEach((day, meals) {
         if (meals is Map) {
@@ -106,7 +128,6 @@ class DietProvider extends ChangeNotifier {
       });
     }
 
-    // From Substitutions
     if (_substitutions != null) {
       _substitutions!.forEach((key, group) {
         if (group['options'] is List) {
@@ -140,10 +161,7 @@ class DietProvider extends ChangeNotifier {
   }
 
   void consumeSmart(String name, String rawQtyString) {
-    // Robust parser
     double qtyToEat = 1.0;
-
-    // Attempt to find the first numeric sequence
     final regExp = RegExp(r'(\d+[.,]?\d*)');
     final match = regExp.firstMatch(rawQtyString);
 
@@ -195,7 +213,6 @@ class DietProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // UPDATED: Now actually updates the diet plan
   void updateDietMeal(
     String day,
     String meal,
@@ -206,7 +223,6 @@ class DietProvider extends ChangeNotifier {
     if (_dietData != null &&
         _dietData![day] != null &&
         _dietData![day][meal] != null) {
-      // Clone the list to trigger notifyListeners correctly after modification
       var currentMeals = List<dynamic>.from(_dietData![day][meal]);
 
       if (idx >= 0 && idx < currentMeals.length) {
@@ -215,14 +231,12 @@ class DietProvider extends ChangeNotifier {
 
         _dietData![day][meal] = currentMeals;
 
-        // Persist changes
         _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
         notifyListeners();
       }
     }
   }
 
-  // UPDATED: Now actually saves the swap
   void swapMeal(String key, ActiveSwap swap) {
     _activeSwaps[key] = swap;
     _storage.saveSwaps(_activeSwaps);

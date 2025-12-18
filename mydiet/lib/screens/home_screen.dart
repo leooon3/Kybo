@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../providers/diet_provider.dart';
 import '../models/active_swap.dart';
 import '../services/api_client.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
+import '../services/auth_service.dart';
 import 'diet_view.dart';
 import 'pantry_view.dart';
 import 'shopping_list_view.dart';
+import 'login_screen.dart';
+import 'history_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -19,6 +23,8 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   int _currentIndex = 0;
   late TabController _tabController;
+  final AuthService _auth = AuthService(); // NEW
+
   final List<String> days = [
     "Lunedì",
     "Martedì",
@@ -56,7 +62,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         await provider.uploadDiet(result.files.single.path!);
         if (!mounted) return;
         scaffoldMessenger.showSnackBar(
-          const SnackBar(content: Text("Dieta caricata!")),
+          const SnackBar(content: Text("Dieta caricata e salvata!")),
         );
       } catch (e) {
         if (mounted) {
@@ -202,13 +208,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     );
   }
 
-  // --- TIME SETTINGS LOGIC ---
   void _openTimeSettings(BuildContext context) async {
     final storage = StorageService();
-    // 1. Load current times
     Map<String, String> times = await storage.loadMealTimes();
 
-    // Helper vars to track changes in Dialog state
     TimeOfDay tColazione = _parseTime(times["colazione"]!);
     TimeOfDay tPranzo = _parseTime(times["pranzo"]!);
     TimeOfDay tCena = _parseTime(times["cena"]!);
@@ -216,7 +219,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     if (!mounted) return;
 
     showDialog(
-      // ignore: use_build_context_synchronously
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
@@ -244,9 +246,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 ),
                 FilledButton(
                   onPressed: () async {
-                    Navigator.pop(ctx);
+                    // 1. Capture the navigator before async gaps
+                    final navigator = Navigator.of(ctx);
 
-                    // 2. Save new times
+                    // 2. Close dialog immediately (synchronous)
+                    navigator.pop();
+
+                    // 3. Perform async saves
                     final newTimes = {
                       "colazione": _formatTime(tColazione),
                       "pranzo": _formatTime(tPranzo),
@@ -254,28 +260,19 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     };
                     await storage.saveMealTimes(newTimes);
 
-                    // 3. Reschedule Notifications
+                    // 4. Async Notification setup
                     final notifs = NotificationService();
                     await notifs.init();
                     bool granted = await notifs.requestPermissions();
+
                     if (granted) {
                       await notifs.scheduleAllMeals();
+
+                      // 5. Check mounted before using the PARENT context (not ctx)
                       if (mounted) {
-                        // ignore: use_build_context_synchronously
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text("Orari aggiornati e attivati! ✅"),
-                          ),
-                        );
-                      }
-                    } else {
-                      if (mounted) {
-                        // ignore: use_build_context_synchronously
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              "Permesso negato. Impossibile attivare.",
-                            ),
                           ),
                         );
                       }
@@ -337,88 +334,143 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final provider = context.watch<DietProvider>();
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            UserAccountsDrawerHeader(
-              // UPDATED: 'NutriScan' -> 'MyDiet'
-              accountName: const Text("MyDiet"),
-              accountEmail: const Text("Gestione Dieta"),
-              decoration: BoxDecoration(color: colorScheme.primary),
+    // Listen to Auth State
+    return StreamBuilder<User?>(
+      stream: _auth.authStateChanges,
+      builder: (context, snapshot) {
+        final user = snapshot.data;
+
+        return Scaffold(
+          drawer: Drawer(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                UserAccountsDrawerHeader(
+                  accountName: const Text("MyDiet"),
+                  accountEmail: Text(user?.email ?? "Ospite"),
+                  currentAccountPicture: CircleAvatar(
+                    backgroundColor: Colors.white,
+                    child: Icon(
+                      Icons.person,
+                      size: 40,
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                  decoration: BoxDecoration(color: colorScheme.primary),
+                ),
+
+                // ACCOUNT ACTIONS
+                if (user == null)
+                  ListTile(
+                    leading: const Icon(Icons.login),
+                    title: const Text("Accedi / Registrati"),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      );
+                    },
+                  )
+                else ...[
+                  ListTile(
+                    leading: const Icon(Icons.history),
+                    title: const Text("Cronologia Diete"),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const HistoryScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.logout),
+                    title: const Text("Esci"),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _auth.signOut();
+                    },
+                  ),
+                ],
+
+                const Divider(),
+
+                ListTile(
+                  leading: const Icon(Icons.upload_file),
+                  title: const Text("Carica Dieta PDF"),
+                  onTap: () => _uploadDiet(context),
+                ),
+                ListTile(
+                  leading: Icon(
+                    Icons.access_time_filled,
+                    color: colorScheme.secondary,
+                  ),
+                  title: const Text("Imposta Orari Pasti"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _openTimeSettings(context);
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text("Reset Dati Locali"),
+                  onTap: () {
+                    provider.clearData();
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.upload_file),
-              title: const Text("Carica Dieta PDF"),
-              onTap: () => _uploadDiet(context),
-            ),
-            const Divider(),
-            ListTile(
-              leading: Icon(
-                Icons.access_time_filled,
-                color: colorScheme.secondary,
-              ),
-              title: const Text("Imposta Orari Pasti"),
-              subtitle: const Text("Configura notifiche"),
-              onTap: () {
-                Navigator.pop(context);
-                _openTimeSettings(context);
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text("Reset Dati"),
-              onTap: () {
-                provider.clearData();
-                Navigator.pop(context);
-              },
-            ),
-          ],
-        ),
-      ),
-      appBar: AppBar(
-        // UPDATED: 'NutriScan' -> 'MyDiet'
-        title: const Text("MyDiet"),
-        actions: [
-          if (_currentIndex == 0)
-            IconButton(
-              icon: Icon(
-                provider.isTranquilMode ? Icons.spa : Icons.spa_outlined,
-              ),
-              tooltip: "Modalità Relax",
-              onPressed: provider.toggleTranquilMode,
-            ),
-        ],
-        bottom: _currentIndex == 0
-            ? TabBar(
-                controller: _tabController,
-                isScrollable: true,
-                tabs: days
-                    .map((d) => Tab(text: d.substring(0, 3).toUpperCase()))
-                    .toList(),
-              )
-            : null,
-      ),
-      body: provider.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _buildBody(provider),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.calendar_today),
-            label: 'Piano',
           ),
-          NavigationDestination(icon: Icon(Icons.kitchen), label: 'Dispensa'),
-          NavigationDestination(
-            icon: Icon(Icons.shopping_cart),
-            label: 'Lista',
+          appBar: AppBar(
+            title: const Text("MyDiet"),
+            actions: [
+              if (_currentIndex == 0)
+                IconButton(
+                  icon: Icon(
+                    provider.isTranquilMode ? Icons.spa : Icons.spa_outlined,
+                  ),
+                  tooltip: "Modalità Relax",
+                  onPressed: provider.toggleTranquilMode,
+                ),
+            ],
+            bottom: _currentIndex == 0
+                ? TabBar(
+                    controller: _tabController,
+                    isScrollable: true,
+                    tabs: days
+                        .map((d) => Tab(text: d.substring(0, 3).toUpperCase()))
+                        .toList(),
+                  )
+                : null,
           ),
-        ],
-      ),
+          body: provider.isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _buildBody(provider),
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: (i) => setState(() => _currentIndex = i),
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.calendar_today),
+                label: 'Piano',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.kitchen),
+                label: 'Dispensa',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.shopping_cart),
+                label: 'Lista',
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

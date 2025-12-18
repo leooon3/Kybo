@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart'; // Import necessario
 import '../core/env.dart';
 
 class ApiException implements Exception {
@@ -22,7 +23,6 @@ class ApiClient {
   factory ApiClient() => _instance;
   ApiClient._internal();
 
-  // [UPDATED] Added 'fields' parameter to send extra data (like fcm_token)
   Future<dynamic> uploadFile(
     String endpoint,
     String filePath, {
@@ -33,6 +33,14 @@ class ApiClient {
         'POST',
         Uri.parse('${Env.apiUrl}$endpoint'),
       );
+
+      // --- SECURITY: Aggiungi Token Firebase ---
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final token = await user.getIdToken();
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+      // ----------------------------------------
 
       // Add the file
       request.files.add(await http.MultipartFile.fromPath('file', filePath));
