@@ -1,62 +1,81 @@
 import os
-import json
 import uuid
+import logging
 import aiofiles
-from typing import Optional, List
+import json
+from typing import Optional
 
 import firebase_admin
 from firebase_admin import credentials, auth
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.services.diet_service import DietParser
 from app.services.receipt_service import ReceiptScanner
 from app.services.notification_service import NotificationService
 from app.services.normalization import normalize_meal_name
+from app.core.config import settings
 
 # --- CONFIGURATION ---
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".webp"}
+
+# --- LOGGING ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("mydiet_api")
 
 # --- FIREBASE SETUP ---
 if not firebase_admin._apps:
     try:
-        cred = credentials.ApplicationDefault()
-        firebase_admin.initialize_app(cred)
-        print("🔥 Firebase initialized via ApplicationDefault credentials.")
+        # Prioritize Environment Variables for Security
+        if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+            cred = credentials.ApplicationDefault()
+            firebase_admin.initialize_app(cred)
+            logger.info("🔥 Firebase initialized via Env Vars")
+        elif os.path.exists("serviceAccountKey.json"):
+            cred = credentials.Certificate("serviceAccountKey.json")
+            firebase_admin.initialize_app(cred)
+            logger.info("🔥 Firebase initialized via File")
+        else:
+            logger.warning("⚠️ No Firebase credentials found. Auth will fail.")
     except Exception as e:
-        print(f"❌ Critical Firebase Init Error: {e}")
+        logger.error(f"❌ Critical Firebase Init Error: {e}")
 
+# --- RATE LIMITER ---
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- CORS MIDDLEWARE (Crucial for Flutter Web) ---
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict this to your domain in production
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-# Initialize Services
+# Services
 notification_service = NotificationService()
 diet_parser = DietParser()
 
 # --- UTILS ---
 async def save_upload_file(file: UploadFile, filename: str) -> None:
-    """Saves file safely with size limit checking."""
     size = 0
     try:
         async with aiofiles.open(filename, 'wb') as out_file:
             while content := await file.read(1024 * 1024):
                 size += len(content)
                 if size > MAX_FILE_SIZE:
-                    raise HTTPException(status_code=413, detail="File too large (Max 10MB)")
+                    raise HTTPException(status_code=413, detail="File too large")
                 await out_file.write(content)
     except Exception as e:
-        # Cleanup partial file
         if os.path.exists(filename):
             os.remove(filename)
         raise e
@@ -64,51 +83,47 @@ async def save_upload_file(file: UploadFile, filename: str) -> None:
 def validate_extension(filename: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"File type not supported. Allowed: {ALLOWED_EXTENSIONS}")
+        raise HTTPException(status_code=400, detail="Invalid file type")
     return ext
 
-# --- SECURITY DEPENDENCY ---
+# --- AUTH ---
 async def verify_token(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid auth header format")
+        raise HTTPException(status_code=401, detail="Invalid auth header")
     
     token = authorization.split("Bearer ")[1]
     try:
-        # [FIX] Run blocking auth verify in a threadpool to prevent freezing the API
         decoded_token = await run_in_threadpool(auth.verify_id_token, token)
-        
-        if not decoded_token.get('email_verified', False):
-            raise HTTPException(status_code=403, detail="Email verification required")
         return decoded_token['uid'] 
-    except ValueError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        print(f"Auth Error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except Exception:
+        logger.warning("Auth token verification failed")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 # --- ENDPOINTS ---
 
 @app.post("/upload-diet")
+@limiter.limit("5/minute")
 async def upload_diet(
+    request: Request,
     file: UploadFile = File(...),
     fcm_token: Optional[str] = Form(None),
     user_id: str = Depends(verify_token) 
 ):
-    # [FIX] Validate extension explicitly
     if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed for diets")
+        raise HTTPException(status_code=400, detail="Only PDF allowed")
 
     temp_filename = f"{uuid.uuid4()}.pdf"
     
     try:
         await save_upload_file(file, temp_filename)
         
-        # [FIX] parse_complex_diet might block, consider threadpool if it's slow
+        # Parse safely
         raw_data = await run_in_threadpool(diet_parser.parse_complex_diet, temp_filename)
+        
+        # Convert data 
         final_data = _convert_to_app_format(raw_data)
         
         if fcm_token:
-            # Send notification in background (optional, but better)
             await run_in_threadpool(notification_service.send_diet_ready, fcm_token)
             
         return JSONResponse(content=final_data)
@@ -116,18 +131,20 @@ async def upload_diet(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing Error: {str(e)}")
+        logger.error(f"Diet Upload Error: {e}")
+        raise HTTPException(status_code=500, detail="Processing failed")
     finally:
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
 
 @app.post("/scan-receipt")
+@limiter.limit("10/minute")
 async def scan_receipt(
+    request: Request,
     file: UploadFile = File(...),
     allowed_foods: str = Form(...),
     user_id: str = Depends(verify_token) 
 ):
-    # [FIX] Validate extension
     ext = validate_extension(file.filename)
     temp_filename = f"{uuid.uuid4()}{ext}"
     
@@ -135,15 +152,11 @@ async def scan_receipt(
         try:
             food_list = json.loads(allowed_foods)
         except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="allowed_foods must be valid JSON")
-
-        if not isinstance(food_list, list):
-            raise HTTPException(status_code=400, detail="allowed_foods must be a list")
+            raise HTTPException(status_code=400, detail="Invalid JSON format")
 
         await save_upload_file(file, temp_filename)
         
         current_scanner = ReceiptScanner(allowed_foods_list=food_list)
-        # [FIX] Offload OCR/Scanning to threadpool (This is CPU heavy!)
         found_items = await run_in_threadpool(current_scanner.scan_receipt, temp_filename)
         
         return JSONResponse(content=found_items)
@@ -151,13 +164,13 @@ async def scan_receipt(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Receipt Scan Error: {e}")
+        raise HTTPException(status_code=500, detail="Scanning failed")
     finally:
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
 
 def _convert_to_app_format(gemini_output):
-    # (Kept logic mostly same, added safety check for None)
     if not gemini_output:
         return {"plan": {}, "substitutions": {}}
 

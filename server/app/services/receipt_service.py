@@ -1,5 +1,5 @@
 import pytesseract
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import pdfplumber
 import re
 import os
@@ -25,9 +25,10 @@ class ReceiptScanner:
     def _load_from_list(self, food_list):
         self.allowed_foods.add("filetti") 
         for name in food_list:
-            clean = self._clean_diet_name(name)
-            if len(clean) > 2:
-                self.allowed_foods.add(clean)
+            if isinstance(name, str):
+                clean = self._clean_diet_name(name)
+                if len(clean) > 2:
+                    self.allowed_foods.add(clean)
                 
         print(f"[INFO] Receipt Context: {len(self.allowed_foods)} allowed foods loaded.")
 
@@ -40,7 +41,7 @@ class ReceiptScanner:
     def extract_text_from_file(self, file_path):
         text = ""
         try:
-            # [FIX] DoS Protection: Check file size (Max 10MB)
+            # DoS Protection: Check file size (Max 10MB)
             if os.path.getsize(file_path) > 10 * 1024 * 1024:
                 print("❌ File too large for OCR")
                 return ""
@@ -48,7 +49,7 @@ class ReceiptScanner:
             if file_path.lower().endswith('.pdf'):
                 print("  📄 Mode: Digital PDF")
                 with pdfplumber.open(file_path) as pdf:
-                    # [FIX] DoS Protection: Limit pages
+                    # DoS Protection: Limit pages
                     if len(pdf.pages) > 20:
                         print("❌ PDF exceeds page limit (20)")
                         return ""
@@ -58,9 +59,17 @@ class ReceiptScanner:
                         if extracted: text += extracted + "\n"
             else:
                 print("  📷 Mode: Image OCR")
-                # [FIX] PIL Image.open is lazy, verify it's a valid image
+                # Security: Verify image integrity
                 with Image.open(file_path) as img:
+                    img.verify()
+
+                # Re-open for processing
+                with Image.open(file_path) as img:
+                    # Protection against decompression bombs
+                    Image.MAX_IMAGE_PIXELS = 20000000
                     text = pytesseract.image_to_string(img, lang='ita')
+        except UnidentifiedImageError:
+            print("[FILE ERROR] Invalid image format")
         except Exception as e:
             print(f"[FILE ERROR] {e}")
         return text
