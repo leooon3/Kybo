@@ -30,7 +30,7 @@ class ApiClient {
     String filePath, {
     Map<String, String>? fields,
   }) async {
-    // [NEW] Retry Logic
+    // Retry only on network errors, not on timeouts (since we removed the timeout)
     final r = RetryOptions(
       maxAttempts: 3,
       delayFactor: const Duration(seconds: 1),
@@ -41,13 +41,12 @@ class ApiClient {
         () async {
           return await _performUpload(endpoint, filePath, fields);
         },
-        // Retry on Network errors or Server 500 errors
         retryIf: (e) =>
             e is NetworkException || (e is ApiException && e.statusCode >= 500),
       );
     } catch (e) {
       if (e is ApiException) rethrow;
-      throw NetworkException('Operation failed after retries: $e');
+      throw NetworkException('Operation failed: $e');
     }
   }
 
@@ -62,23 +61,27 @@ class ApiClient {
         Uri.parse('${Env.apiUrl}$endpoint'),
       );
 
+      // Auth Token
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final token = await user.getIdToken(false);
         request.headers['Authorization'] = 'Bearer $token';
       }
 
+      // Add File
       request.files.add(await http.MultipartFile.fromPath('file', filePath));
 
+      // Add Fields
       if (fields != null) {
         request.fields.addAll(fields);
       }
 
-      var streamedResponse = await request.send().timeout(
-        const Duration(seconds: 30),
-      );
+      // [CHANGE] No timeout. Waits forever for the server.
+      var streamedResponse = await request.send();
+
       var response = await http.Response.fromStream(streamedResponse);
 
+      // Handle Response
       if (response.statusCode >= 200 && response.statusCode < 300) {
         if (response.body.isEmpty) return {};
         try {
@@ -90,6 +93,7 @@ class ApiClient {
           );
         }
       } else {
+        // Parse Error
         String errorMsg = response.body;
         try {
           final errorJson = json.decode(utf8.decode(response.bodyBytes));
@@ -98,6 +102,7 @@ class ApiClient {
             errorMsg = detail is String ? detail : detail.toString();
           }
         } catch (_) {
+          // Truncate non-JSON HTML errors
           if (errorMsg.length > 200) {
             errorMsg = "${errorMsg.substring(0, 200)}...";
           }
@@ -106,7 +111,6 @@ class ApiClient {
       }
     } catch (e) {
       if (e is ApiException) rethrow;
-      if (e is TimeoutException) throw NetworkException('Connection timed out');
       throw NetworkException('Network error: $e');
     }
   }
