@@ -39,30 +39,40 @@ jobs:
         env:
           GOOGLE_SERVICE_INFO: ${{ secrets.IOS_GOOGLE_SERVICE_INFO_PLIST }}
         run: |
-          echo "$GOOGLE_SERVICE_INFO" > ios/Runner/GoogleService-Info.plist
+          # If secret is missing, create a dummy to prevent immediate crash (but app won't connect)
+          if [ -z "$GOOGLE_SERVICE_INFO" ]; then
+            echo "WARNING: Secret IOS_GOOGLE_SERVICE_INFO_PLIST is missing. Using dummy."
+            cat <<EOF > ios/Runner/GoogleService-Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict><key>API_KEY</key><string>dummy</string><key>PROJECT_ID</key><string>dummy</string><key>GOOGLE_APP_ID</key><string>1:123:ios:abc</string></dict>
+          </plist>
+          EOF
+          else
+            echo "$GOOGLE_SERVICE_INFO" > ios/Runner/GoogleService-Info.plist
+          fi
 
       - name: Install Dependencies
         run: flutter pub get
 
-      # 3. Disable Signing (But PRESERVE Entitlements)
+      # 3. NUCLEAR SIGNING FIX (Updates project.pbxproj directly)
       - name: Disable Signing
         run: |
           cd ios
 
-          # A. Force Manual Signing Style
-          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
+          # A. Force Manual Signing Style (Replaces any line with CODE_SIGN_STYLE)
+          sed -i '' 's/.*CODE_SIGN_STYLE.*/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
 
-          # B. Clear Development Team & Profile
-          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' Runner.xcodeproj/project.pbxproj
+          # B. Remove Team and Profile (Replaces any line with these keys)
+          sed -i '' 's/.*DEVELOPMENT_TEAM.*/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/.*PROVISIONING_PROFILE_SPECIFIER.*/PROVISIONING_PROFILE_SPECIFIER = "";/g' Runner.xcodeproj/project.pbxproj
 
-          # C. REMOVE IDENTITY OVERRIDES
-          sed -i '' 's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "";/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
+          # C. REMOVE IDENTITY (The Critical Fix)
+          # This replaces "CODE_SIGN_IDENTITY[sdk=iphoneos*]" and "CODE_SIGN_IDENTITY" with empty string
+          sed -i '' 's/.*CODE_SIGN_IDENTITY.*/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
 
-          # D. (Removed: Do NOT delete Entitlements to allow Push/Background tasks to survive)
-
-          # E. Force XCConfig Overrides
+          # D. Force XCConfig Overrides (Fail-safe)
           echo "" >> Flutter/Release.xcconfig
           echo "CODE_SIGNING_ALLOWED=NO" >> Flutter/Release.xcconfig
           echo "CODE_SIGNING_REQUIRED=NO" >> Flutter/Release.xcconfig
