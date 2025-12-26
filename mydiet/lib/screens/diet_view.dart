@@ -108,7 +108,6 @@ class DietView extends StatelessWidget {
             onSwap: (String fullKey, int cad) {
               onSwap(fullKey, cad);
             },
-            // CONNECTED EDIT CALLBACK
             onEdit: (int itemIndex, String name, String qty) {
               onEdit(day, mealName, itemIndex, name, qty);
             },
