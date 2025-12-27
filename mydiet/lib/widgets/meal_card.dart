@@ -88,7 +88,7 @@ class MealCard extends StatelessWidget {
       isToday = day.toLowerCase() == italianDays[todayIndex].toLowerCase();
     }
 
-    // Grouping Logic (Consistent with Provider)
+    // Grouping Logic
     List<List<dynamic>> groupedFoods = [];
     List<dynamic> currentGroup = [];
     for (var food in foods) {
@@ -101,7 +101,7 @@ class MealCard extends StatelessWidget {
         if (currentGroup.isNotEmpty)
           currentGroup.add(food);
         else
-          groupedFoods.add([food]); // Standalone item
+          groupedFoods.add([food]);
       }
     }
     if (currentGroup.isNotEmpty) groupedFoods.add(List.from(currentGroup));
@@ -143,7 +143,6 @@ class MealCard extends StatelessWidget {
               // Availability Logic
               final String availabilityKey =
                   "${day}_${mealName}_$currentGroupStart";
-              // If not consumed, check map. If consumed, it's effectively "unavailable" for visual border but "done".
               final isAvailable =
                   !isConsumed &&
                   (Provider.of<DietProvider>(
@@ -156,10 +155,13 @@ class MealCard extends StatelessWidget {
               String swapKey = "${day}_${mealName}_group_$groupIndex";
               bool isSwapped = activeSwaps.containsKey(swapKey);
 
-              // Colors
+              // [FIX 1] Logic Colors: Separate TranquilMode from Availability
+              // We want to see the border GREEN if available, even in Tranquil Mode.
               Color bgColor = Colors.grey.withOpacity(0.05);
               Color? borderColor;
-              if (!isTranquilMode && !isConsumed) {
+
+              if (!isConsumed) {
+                // Previously checked !isTranquilMode here, causing the disappearance
                 borderColor = isAvailable
                     ? Colors.green.withOpacity(0.5)
                     : Colors.transparent;
@@ -205,8 +207,8 @@ class MealCard extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Status Icon
-                    if (!isTranquilMode && !isConsumed)
+                    // [FIX 1] Status Icon: Show it even in Tranquil Mode if not consumed
+                    if (!isConsumed)
                       Padding(
                         padding: const EdgeInsets.only(top: 4, right: 12),
                         child: Icon(
@@ -218,7 +220,7 @@ class MealCard extends StatelessWidget {
                         ),
                       ),
 
-                    if (isConsumed && !isTranquilMode)
+                    if (isConsumed) // Consumed tick works in both modes
                       Padding(
                         padding: const EdgeInsets.only(top: 4, right: 12),
                         child: Icon(
@@ -228,7 +230,7 @@ class MealCard extends StatelessWidget {
                         ),
                       ),
 
-                    // Text
+                    // Text Content
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -238,9 +240,11 @@ class MealCard extends StatelessWidget {
                           String qty = item['qty']?.toString() ?? "";
                           bool isHeaderItem = (qty == "N/A" || qty.isEmpty);
 
+                          // [FIX 1] Tranquil Mode Logic: Hides TEXT QUANTITY only
                           bool shouldHideQty = false;
                           if (isTranquilMode) {
                             String cleanName = name.toLowerCase();
+                            // Check whitelist
                             for (var w in _relaxableFoods) {
                               if (cleanName.contains(w)) {
                                 shouldHideQty = true;
@@ -251,8 +255,10 @@ class MealCard extends StatelessWidget {
 
                           String textDisplay;
                           if (shouldHideQty) {
+                            // Relax Mode: Name only
                             textDisplay = name;
                           } else {
+                            // Normal Mode: Name + Qty
                             textDisplay = (isHeaderItem || qty.isEmpty)
                                 ? name
                                 : "$name ($qty)";
@@ -298,7 +304,6 @@ class MealCard extends StatelessWidget {
                             ),
                           ),
 
-                        // [FIX] Check Button with Popup Logic
                         if (isToday && !isConsumed)
                           SizedBox(
                             width: 40,
@@ -308,7 +313,6 @@ class MealCard extends StatelessWidget {
                               color: Colors.green,
                               onPressed: () {
                                 if (isAvailable) {
-                                  // Normal Consumption
                                   Provider.of<DietProvider>(
                                     context,
                                     listen: false,
@@ -324,7 +328,6 @@ class MealCard extends StatelessWidget {
                                     ),
                                   );
                                 } else {
-                                  // Warning Popup
                                   showDialog(
                                     context: context,
                                     builder: (ctx) => AlertDialog(

@@ -24,10 +24,21 @@ from app.core.config import settings
 from app.models.schemas import DietResponse, Dish, Ingredient, SubstitutionGroup, SubstitutionOption
 
 # --- CONFIGURATION ---
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".webp"}
 
-# --- LOGGING (Structlog) ---
+# [FIX 2] Standard Order for Meals to enforce frontend sorting
+MEAL_ORDER = [
+    "Colazione",
+    "Seconda Colazione",
+    "Spuntino",
+    "Pranzo",
+    "Merenda",
+    "Cena",
+    "Spuntino Serale",
+    "Nell'Arco Della Giornata"
+]
+
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
@@ -37,7 +48,6 @@ structlog.configure(
 )
 logger = structlog.get_logger()
 
-# --- FIREBASE SETUP ---
 if not firebase_admin._apps:
     try:
         if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
@@ -53,13 +63,11 @@ if not firebase_admin._apps:
     except Exception as e:
         logger.error("firebase_init_critical_error", error=str(e))
 
-# --- RATE LIMITER ---
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -68,11 +76,9 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# Services
 notification_service = NotificationService()
 diet_parser = DietParser()
 
-# --- UTILS ---
 async def save_upload_file(file: UploadFile, filename: str) -> None:
     size = 0
     try:
@@ -93,7 +99,6 @@ def validate_extension(filename: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid file type")
     return ext
 
-# --- AUTH ---
 async def verify_token(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid auth header")
@@ -110,11 +115,8 @@ async def verify_token(authorization: str = Header(...)):
         decoded_token = await run_in_threadpool(auth.verify_id_token, token)
         return decoded_token['uid'] 
     except Exception as e:
-        # [FIX] Enhanced Error Logging
         logger.warning("auth_failed", error=str(e), error_type=type(e).__name__)
         raise HTTPException(status_code=401, detail="Authentication failed")
-
-# --- ENDPOINTS ---
 
 @app.post("/upload-diet", response_model=DietResponse)
 @limiter.limit("5/minute")
@@ -134,10 +136,7 @@ async def upload_diet(
         await save_upload_file(file, temp_filename)
         log.info("file_upload_success")
         
-        # Parse safely
         raw_data = await run_in_threadpool(diet_parser.parse_complex_diet, temp_filename)
-        
-        # Convert data (Validates via Pydantic)
         final_data = _convert_to_app_format(raw_data)
         
         if fcm_token:
@@ -271,6 +270,24 @@ def _convert_to_app_format(gemini_output) -> DietResponse:
                 app_plan[day_name][meal_name].extend(items)
             else:
                 app_plan[day_name][meal_name] = items
+
+    # [FIX 2] Sort Meals chronologically before returning
+    # This prevents the "scrambled meals" issue in Flutter without hardcoding strings there.
+    for day, meals in app_plan.items():
+        ordered_meals = {}
+        # 1. Add known meals in order
+        for standard_meal in MEAL_ORDER:
+            # We look for fuzzy matches or exact matches in keys
+            # Ideally normalize_meal_name already maps to these standard keys
+            if standard_meal in meals:
+                ordered_meals[standard_meal] = meals[standard_meal]
+        
+        # 2. Add any leftovers (custom meals not in standard list)
+        for k, v in meals.items():
+            if k not in ordered_meals:
+                ordered_meals[k] = v
+        
+        app_plan[day] = ordered_meals
 
     return DietResponse(
         plan=app_plan,
