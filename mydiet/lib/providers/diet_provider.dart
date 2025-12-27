@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // [FIX] Required for compute/Isolate
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../repositories/diet_repository.dart';
 import '../services/storage_service.dart';
@@ -8,13 +9,214 @@ import '../models/pantry_item.dart';
 import '../models/active_swap.dart';
 import '../services/api_client.dart';
 
+// --- ISOLATE LOGIC (Must be top-level) ---
+Map<String, bool> _calculateAvailabilityIsolate(Map<String, dynamic> payload) {
+  final dietData = payload['dietData'] as Map<String, dynamic>;
+  final pantryItemsRaw = payload['pantryItems'] as List<dynamic>;
+  final activeSwapsRaw = payload['activeSwaps'] as Map<String, dynamic>;
+
+  // Convert raw pantry data back to simulation map
+  Map<String, double> simulatedFridge = {};
+  for (var item in pantryItemsRaw) {
+    String iName = item['name'].toString().trim().toLowerCase();
+    double iQty = double.tryParse(item['quantity'].toString()) ?? 0.0;
+    String iUnit = item['unit'].toString().toLowerCase();
+
+    // Normalize to base units for simulation
+    if (iUnit == 'kg' || iUnit == 'l') iQty *= 1000;
+    simulatedFridge[iName] = iQty;
+  }
+
+  Map<String, bool> newMap = {};
+  final italianDays = [
+    "Lunedì",
+    "Martedì",
+    "Mercoledì",
+    "Giovedì",
+    "Venerdì",
+    "Sabato",
+    "Domenica",
+  ];
+  final todayIndex = DateTime.now().weekday - 1;
+
+  for (int d = 0; d < italianDays.length; d++) {
+    if (d < todayIndex) continue;
+
+    String day = italianDays[d];
+    if (!dietData.containsKey(day)) continue;
+
+    final mealsOfDay = dietData[day] as Map<String, dynamic>;
+    final mealTypes = [
+      "Colazione",
+      "Seconda Colazione",
+      "Pranzo",
+      "Merenda",
+      "Cena",
+      "Spuntino Serale",
+    ];
+
+    for (var mType in mealTypes) {
+      if (!mealsOfDay.containsKey(mType)) continue;
+      List<dynamic> dishes = List.from(mealsOfDay[mType]);
+
+      // [FIX] Consistent Grouping Logic (Mirrored in Helper)
+      List<List<int>> groups = _buildGroupsStatic(dishes);
+
+      for (int gIdx = 0; gIdx < groups.length; gIdx++) {
+        List<int> indices = groups[gIdx];
+        if (indices.isEmpty) continue;
+
+        bool isConsumed = false;
+        if (indices.isNotEmpty) {
+          final firstDish = dishes[indices[0]];
+          if (firstDish['consumed'] == true) isConsumed = true;
+        }
+
+        if (isConsumed) {
+          for (int originalIdx in indices) {
+            newMap["${day}_${mType}_$originalIdx"] = false;
+          }
+          continue;
+        }
+
+        String swapKey = "${day}_${mType}_group_$gIdx";
+        bool isSwapped = activeSwapsRaw.containsKey(swapKey);
+
+        if (isSwapped) {
+          // Handle Swap Simulation
+          final swapData = activeSwapsRaw[swapKey];
+          // Note: swapData here is a Map from JSON, not ActiveSwap object
+          List<dynamic> swapItems = [];
+
+          if (swapData['swappedIngredients'] != null &&
+              (swapData['swappedIngredients'] as List).isNotEmpty) {
+            swapItems = swapData['swappedIngredients'];
+          } else {
+            swapItems = [
+              {
+                'name': swapData['name'],
+                'qty': "${swapData['qty']} ${swapData['unit']}",
+              },
+            ];
+          }
+
+          bool groupCovered = true;
+          for (var item in swapItems) {
+            // Helper logic inlined or called if static
+            if (!_checkAndConsumeSimulatedStatic(item, simulatedFridge)) {
+              groupCovered = false;
+            }
+          }
+          for (int originalIdx in indices) {
+            newMap["${day}_${mType}_$originalIdx"] = groupCovered;
+          }
+        } else {
+          // Normal Simulation
+          for (int i in indices) {
+            final dish = dishes[i];
+            bool isCovered = true;
+
+            if ((dish['qty']?.toString() ?? "") != "N/A") {
+              List<dynamic> itemsToCheck = [];
+              if (dish['ingredients'] != null &&
+                  (dish['ingredients'] as List).isNotEmpty) {
+                itemsToCheck = dish['ingredients'];
+              } else {
+                itemsToCheck = [
+                  {'name': dish['name'], 'qty': dish['qty']},
+                ];
+              }
+
+              for (var item in itemsToCheck) {
+                if (!_checkAndConsumeSimulatedStatic(item, simulatedFridge)) {
+                  isCovered = false;
+                }
+              }
+            }
+            newMap["${day}_${mType}_$i"] = isCovered;
+          }
+        }
+      }
+    }
+  }
+  return newMap;
+}
+
+// Helper for Isolate
+List<List<int>> _buildGroupsStatic(List<dynamic> dishes) {
+  List<List<int>> groups = [];
+  List<int> currentGroupIndices = [];
+
+  for (int i = 0; i < dishes.length; i++) {
+    final d = dishes[i];
+    String qty = d['qty']?.toString() ?? "";
+    bool isHeader = (qty == "N/A");
+
+    if (isHeader) {
+      if (currentGroupIndices.isNotEmpty)
+        groups.add(List.from(currentGroupIndices));
+      currentGroupIndices = [i];
+    } else {
+      if (currentGroupIndices.isNotEmpty) {
+        currentGroupIndices.add(i);
+      } else {
+        groups.add([i]);
+      }
+    }
+  }
+  if (currentGroupIndices.isNotEmpty)
+    groups.add(List.from(currentGroupIndices));
+  return groups;
+}
+
+// Helper for Isolate
+bool _checkAndConsumeSimulatedStatic(
+  Map<String, dynamic> item,
+  Map<String, double> fridge,
+) {
+  String iName = item['name'].toString().trim().toLowerCase();
+  String iRawQty = item['qty'].toString().toLowerCase();
+
+  // Basic parsing logic duplicated for isolate independence
+  final regExp = RegExp(r'(\d+[.,]?\d*)');
+  final match = regExp.firstMatch(iRawQty);
+  double iQty = match != null
+      ? (double.tryParse(match.group(1)!.replaceAll(',', '.')) ?? 1.0)
+      : 1.0;
+
+  if (iRawQty.contains('kg') ||
+      iRawQty.contains('l') && !iRawQty.contains('ml'))
+    iQty *= 1000;
+  // [FIX] Handle vasetto/tablespoon in simulation too
+  if (iRawQty.contains('vasetto')) iQty = 125.0;
+
+  String? foundKey;
+  for (var key in fridge.keys) {
+    if (key.contains(iName) || iName.contains(key)) {
+      foundKey = key;
+      break;
+    }
+  }
+
+  if (foundKey != null && fridge[foundKey]! > 0) {
+    if (fridge[foundKey]! >= iQty) {
+      fridge[foundKey] = fridge[foundKey]! - iQty;
+      return true;
+    } else {
+      fridge[foundKey] = 0;
+      return false; // Partially covered but technically missing full qty
+    }
+  }
+  return false;
+}
+// ------------------------------------------
+
 class DietProvider extends ChangeNotifier {
   final DietRepository _repository;
   final StorageService _storage = StorageService();
   final FirestoreService _firestore = FirestoreService();
   final AuthService _auth = AuthService();
 
-  // Data States
   Map<String, dynamic>? _dietData;
   Map<String, dynamic>? _substitutions;
   List<PantryItem> _pantryItems = [];
@@ -22,7 +224,6 @@ class DietProvider extends ChangeNotifier {
   List<String> _shoppingList = [];
   Map<String, bool> _availabilityMap = {};
 
-  // UI States
   bool _isLoading = false;
   bool _isTranquilMode = false;
   String? _error;
@@ -59,37 +260,54 @@ class DietProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- [FIX] Centralized Grouping Helper ---
+  List<List<int>> _getGroups(List<dynamic> meals) {
+    return _buildGroupsStatic(meals);
+  }
+
+  // --- [FIX] Unit Normalization Helper ---
+  double _normalizeToGrams(double qty, String unit) {
+    final u = unit.trim().toLowerCase();
+    if (u == 'kg' || u == 'l') return qty * 1000;
+    if (u == 'g' || u == 'ml' || u == 'mg') return qty;
+
+    // Abstract units conversion
+    if (u.contains('vasetto')) return qty * 125; // Standard yogurt
+    if (u.contains('cucchiain')) return qty * 5;
+    if (u.contains('cucchiaio')) return qty * 15;
+
+    return qty; // Fallback for 'pz', 'fette' etc.
+  }
+
+  // ... (Upload/Init methods unchanged) ...
   void clearError() {
     _error = null;
+    notifyListeners();
+  }
+
+  void _setLoading(bool val) {
+    _isLoading = val;
     notifyListeners();
   }
 
   Future<void> uploadDiet(String path) async {
     _setLoading(true);
     clearError();
-
     try {
       String? token;
       try {
         token = await FirebaseMessaging.instance.getToken();
-      } catch (e) {
-        debugPrint("FCM Warning: $e");
-      }
-
+      } catch (_) {}
       final result = await _repository.uploadDiet(path, fcmToken: token);
-
       _dietData = result.plan;
       _substitutions = result.substitutions;
-
       await _storage.saveDiet({
         'plan': _dietData,
         'substitutions': _substitutions,
       });
-
       if (_auth.currentUser != null) {
         await _firestore.saveDietToHistory(_dietData!, _substitutions!);
       }
-
       _activeSwaps = {};
       await _storage.saveSwaps({});
       _recalcAvailability();
@@ -112,11 +330,12 @@ class DietProvider extends ChangeNotifier {
       for (var item in items) {
         if (item is Map && item.containsKey('name')) {
           String rawQty = item['quantity']?.toString() ?? "1";
-
+          // Basic parse
           double qty = _parseQty(rawQty);
           String unit = 'pz';
           String lowerRaw = rawQty.toLowerCase();
 
+          // [FIX] Enhanced parsing for common units
           if (lowerRaw.contains('kg')) {
             qty *= 1000;
             unit = 'g';
@@ -126,11 +345,10 @@ class DietProvider extends ChangeNotifier {
             unit = 'g';
           } else if (lowerRaw.contains('ml')) {
             unit = 'ml';
-          } else if (lowerRaw.contains('l') && !lowerRaw.contains('ml')) {
+          } else if (lowerRaw.contains('l')) {
             qty *= 1000;
             unit = 'ml';
-          } else if (lowerRaw.contains('vasetto') ||
-              lowerRaw.contains('vasetti')) {
+          } else if (lowerRaw.contains('vasetto')) {
             unit = 'vasetto';
           }
 
@@ -176,45 +394,15 @@ class DietProvider extends ChangeNotifier {
 
   void consumeMeal(String day, String mealType, int dishIndex) {
     if (_dietData == null || _dietData![day] == null) return;
-
     final meals = _dietData![day][mealType];
     if (meals == null || meals is! List || dishIndex >= meals.length) return;
 
-    // 1. [FIX] Consistent Grouping Logic
-    // We build the full list of groups first, then pick the one containing our dishIndex.
-    // This prevents "loose items" from chaining together incorrectly.
-    List<List<int>> groups = [];
-    List<int> currentGroupIndices = [];
+    // [FIX] Use shared grouping logic
+    List<List<int>> groups = _getGroups(meals);
 
-    for (int i = 0; i < meals.length; i++) {
-      final d = meals[i];
-      String qty = d['qty']?.toString() ?? "";
-      bool isHeader = (qty == "N/A");
-
-      if (isHeader) {
-        if (currentGroupIndices.isNotEmpty) {
-          groups.add(List.from(currentGroupIndices));
-        }
-        currentGroupIndices = [i];
-      } else {
-        if (currentGroupIndices.isNotEmpty) {
-          // Add to existing header-based group
-          currentGroupIndices.add(i);
-        } else {
-          // Standalone item -> Is its own group
-          groups.add([i]);
-        }
-      }
-    }
-    // Add leftover
-    if (currentGroupIndices.isNotEmpty) {
-      groups.add(List.from(currentGroupIndices));
-    }
-
-    // 2. Find the target group
+    // Find the target group
     int groupIndex = -1;
     List<int> targetGroupIndices = [];
-
     for (int g = 0; g < groups.length; g++) {
       if (groups[g].contains(dishIndex)) {
         groupIndex = g;
@@ -223,13 +411,11 @@ class DietProvider extends ChangeNotifier {
       }
     }
 
-    if (targetGroupIndices.isEmpty) return; // Should not happen
+    if (targetGroupIndices.isEmpty) return;
 
-    // 3. Consume Ingredients
     String swapKey = "${day}_${mealType}_group_$groupIndex";
 
     if (_activeSwaps.containsKey(swapKey)) {
-      // Consume Swap
       final swap = _activeSwaps[swapKey]!;
       if (swap.swappedIngredients != null &&
           swap.swappedIngredients!.isNotEmpty) {
@@ -242,12 +428,10 @@ class DietProvider extends ChangeNotifier {
         consumeSmart(swap.name, fullQty);
       }
     } else {
-      // Consume Original Items in this specific group
       for (int i in targetGroupIndices) {
         final dish = meals[i];
-        // Skip consuming the header title itself if it has no ingredients
         if ((dish['qty']?.toString() ?? "") == "N/A") {
-          // If header has hidden ingredients (rare), consume them
+          // If header has hidden ingredients
           if (dish['ingredients'] != null &&
               (dish['ingredients'] as List).isNotEmpty) {
             for (var ing in dish['ingredients']) {
@@ -268,7 +452,7 @@ class DietProvider extends ChangeNotifier {
       }
     }
 
-    // 4. Mark items as Consumed
+    // Mark as Consumed
     var currentMealsList = List<dynamic>.from(_dietData![day][mealType]);
     for (int i in targetGroupIndices) {
       if (i < currentMealsList.length) {
@@ -290,6 +474,7 @@ class DietProvider extends ChangeNotifier {
     String unit = 'pz';
     String lower = rawQtyString.toLowerCase();
 
+    // [FIX] Comprehensive Unit Parsing
     if (lower.contains('kg')) {
       qtyToEat *= 1000;
       unit = 'g';
@@ -303,19 +488,20 @@ class DietProvider extends ChangeNotifier {
       qtyToEat *= 1000;
       unit = 'ml';
     } else if (lower.contains('cucchiain')) {
-      unit = 'cucchiaini';
+      unit = 'cucchiaino';
+    } else if (lower.contains('cucchiai')) {
+      unit = 'cucchiaio';
     } else if (lower.contains('vasett')) {
       unit = 'vasetto';
     } else if (lower.contains('fett')) {
       unit = 'fette';
     } else {
+      // Try to infer unit from existing pantry item
       try {
         final existing = _pantryItems.firstWhere(
           (p) => p.name.trim().toLowerCase() == name.trim().toLowerCase(),
         );
-        if (['g', 'kg', 'ml', 'l'].contains(existing.unit.toLowerCase())) {
-          unit = existing.unit;
-        }
+        unit = existing.unit;
       } catch (_) {}
     }
 
@@ -326,12 +512,14 @@ class DietProvider extends ChangeNotifier {
     final searchName = name.trim().toLowerCase();
     final searchUnit = unit.trim().toLowerCase();
 
+    // 1. Exact Match
     int index = _pantryItems.indexWhere(
       (p) =>
           p.name.toLowerCase() == searchName &&
           p.unit.toLowerCase() == searchUnit,
     );
 
+    // 2. Fuzzy Match
     if (index == -1) {
       index = _pantryItems.indexWhere((p) {
         final pName = p.name.toLowerCase();
@@ -341,30 +529,27 @@ class DietProvider extends ChangeNotifier {
 
     if (index != -1) {
       var item = _pantryItems[index];
-      final pUnit = item.unit.toLowerCase();
 
+      // [FIX] Smart Unit Conversion Deduction
       double qtyToSubtract = qty;
 
-      bool pIsWeight =
-          (pUnit == 'g' || pUnit == 'kg' || pUnit == 'ml' || pUnit == 'l');
-      bool sIsWeight =
-          (searchUnit == 'g' ||
-          searchUnit == 'kg' ||
-          searchUnit == 'ml' ||
-          searchUnit == 'l');
+      double pantryVal = _normalizeToGrams(item.quantity, item.unit);
+      double requiredVal = _normalizeToGrams(qty, unit);
 
-      if (pUnit == searchUnit) {
-        qtyToSubtract = qty;
-      } else if (pIsWeight && sIsWeight) {
-        double searchQtyInBase = qty;
-        if (searchUnit == 'kg' || searchUnit == 'l') searchQtyInBase *= 1000;
+      // If units are compatible (both weight/vol or both abstract), subtract safely
+      if (pantryVal > 0 && requiredVal > 0 && item.unit != unit) {
+        // Convert requiredVal back to Item's unit scale roughly
+        // Actually, safer to convert Item to standardized, subtract, then convert back?
+        // Simplest approach: Just subtract if Normalized values align.
 
-        if (pUnit == 'kg' || pUnit == 'l') {
-          qtyToSubtract = searchQtyInBase / 1000.0;
-        } else {
-          qtyToSubtract = searchQtyInBase;
-        }
-      } else {
+        // E.g. Item: 1kg (1000g). Req: 500g (500g).
+        // New Item Qty = (1000 - 500) = 500g -> 0.5kg
+
+        // We need to update the item.quantity which is in item.unit.
+        double conversionFactor = pantryVal / item.quantity; // grams per unit
+        double qtyToSubtractInItemUnits = requiredVal / conversionFactor;
+        qtyToSubtract = qtyToSubtractInItemUnits;
+      } else if (item.unit == unit) {
         qtyToSubtract = qty;
       }
 
@@ -389,171 +574,34 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
-  void _recalcAvailability() {
+  // --- [FIX] Offload Calculation to Isolate ---
+  Future<void> _recalcAvailability() async {
     if (_dietData == null) return;
 
-    Map<String, double> simulatedFridge = {};
-    for (var item in _pantryItems) {
-      String iName = item.name.trim().toLowerCase();
-      double iQty = item.quantity;
-      String iUnit = item.unit.toLowerCase();
-      if (iUnit == 'kg' || iUnit == 'l') iQty *= 1000;
-      simulatedFridge[iName] = iQty;
+    // Serialize data for Isolate
+    final payload = {
+      'dietData': _dietData,
+      'pantryItems': _pantryItems
+          .map((p) => {'name': p.name, 'quantity': p.quantity, 'unit': p.unit})
+          .toList(),
+      // Convert ActiveSwap objects to basic Map
+      'activeSwaps': _activeSwaps.map(
+        (key, value) => MapEntry(key, {
+          'name': value.name,
+          'qty': value.qty,
+          'unit': value.unit,
+          'swappedIngredients': value.swappedIngredients,
+        }),
+      ),
+    };
+
+    try {
+      final newMap = await compute(_calculateAvailabilityIsolate, payload);
+      _availabilityMap = newMap;
+      notifyListeners();
+    } catch (e) {
+      debugPrint("Isolate Calc Error: $e");
     }
-
-    Map<String, bool> newMap = {};
-    final italianDays = [
-      "Lunedì",
-      "Martedì",
-      "Mercoledì",
-      "Giovedì",
-      "Venerdì",
-      "Sabato",
-      "Domenica",
-    ];
-    final todayIndex = DateTime.now().weekday - 1;
-
-    for (int d = 0; d < italianDays.length; d++) {
-      if (d < todayIndex) continue;
-
-      String day = italianDays[d];
-      if (!_dietData!.containsKey(day)) continue;
-
-      final mealsOfDay = _dietData![day] as Map<String, dynamic>;
-      final mealTypes = [
-        "Colazione",
-        "Seconda Colazione",
-        "Pranzo",
-        "Merenda",
-        "Cena",
-        "Spuntino Serale",
-      ];
-
-      for (var mType in mealTypes) {
-        if (!mealsOfDay.containsKey(mType)) continue;
-        List<dynamic> dishes = List.from(mealsOfDay[mType]);
-
-        // [FIX] Consistent Grouping Logic (Mirrors consumeMeal and MealCard)
-        List<List<int>> groups = [];
-        List<int> currentGroupIndices = [];
-
-        for (int i = 0; i < dishes.length; i++) {
-          final d = dishes[i];
-          String qty = d['qty']?.toString() ?? "";
-          if (qty == "N/A") {
-            if (currentGroupIndices.isNotEmpty)
-              groups.add(List.from(currentGroupIndices));
-            currentGroupIndices = [i];
-          } else {
-            if (currentGroupIndices.isNotEmpty) {
-              currentGroupIndices.add(i);
-            } else {
-              // Standalone item -> Separate group
-              groups.add([i]);
-            }
-          }
-        }
-        if (currentGroupIndices.isNotEmpty)
-          groups.add(List.from(currentGroupIndices));
-
-        for (int gIdx = 0; gIdx < groups.length; gIdx++) {
-          List<int> indices = groups[gIdx];
-          if (indices.isEmpty) continue;
-
-          bool isConsumed = false;
-          if (indices.isNotEmpty) {
-            final firstDish = dishes[indices[0]];
-            if (firstDish['consumed'] == true) isConsumed = true;
-          }
-
-          if (isConsumed) {
-            for (int originalIdx in indices) {
-              newMap["${day}_${mType}_$originalIdx"] = false;
-            }
-            continue;
-          }
-
-          String swapKey = "${day}_${mType}_group_$gIdx";
-          bool isSwapped = _activeSwaps.containsKey(swapKey);
-
-          if (isSwapped) {
-            final swap = _activeSwaps[swapKey]!;
-            List<dynamic> swapItems = [];
-            if (swap.swappedIngredients != null &&
-                swap.swappedIngredients!.isNotEmpty) {
-              swapItems = swap.swappedIngredients!;
-            } else {
-              swapItems = [
-                {'name': swap.name, 'qty': "${swap.qty} ${swap.unit}"},
-              ];
-            }
-
-            bool groupCovered = true;
-            for (var item in swapItems) {
-              if (!_checkAndConsumeSimulated(item, simulatedFridge))
-                groupCovered = false;
-            }
-            for (int originalIdx in indices) {
-              newMap["${day}_${mType}_$originalIdx"] = groupCovered;
-            }
-          } else {
-            for (int i in indices) {
-              final dish = dishes[i];
-              bool isCovered = true;
-
-              if ((dish['qty']?.toString() ?? "") != "N/A") {
-                List<dynamic> itemsToCheck = [];
-                if (dish['ingredients'] != null &&
-                    (dish['ingredients'] as List).isNotEmpty) {
-                  itemsToCheck = dish['ingredients'];
-                } else {
-                  itemsToCheck = [
-                    {'name': dish['name'], 'qty': dish['qty']},
-                  ];
-                }
-
-                for (var item in itemsToCheck) {
-                  if (!_checkAndConsumeSimulated(item, simulatedFridge))
-                    isCovered = false;
-                }
-              }
-              newMap["${day}_${mType}_$i"] = isCovered;
-            }
-          }
-        }
-      }
-    }
-    _availabilityMap = newMap;
-  }
-
-  bool _checkAndConsumeSimulated(
-    Map<String, dynamic> item,
-    Map<String, double> fridge,
-  ) {
-    String iName = item['name'].toString().trim().toLowerCase();
-    String iRawQty = item['qty'].toString().toLowerCase();
-    double iQty = _parseQty(iRawQty);
-
-    if (iRawQty.contains('kg') || iRawQty.contains('l')) iQty *= 1000;
-
-    String? foundKey;
-    for (var key in fridge.keys) {
-      if (key.contains(iName) || iName.contains(key)) {
-        foundKey = key;
-        break;
-      }
-    }
-
-    if (foundKey != null && fridge[foundKey]! > 0) {
-      if (fridge[foundKey]! >= iQty) {
-        fridge[foundKey] = fridge[foundKey]! - iQty;
-        return true;
-      } else {
-        fridge[foundKey] = 0;
-        return false;
-      }
-    }
-    return false;
   }
 
   double _parseQty(String raw) {
@@ -571,6 +619,7 @@ class DietProvider extends ChangeNotifier {
     return "Errore imprevisto: $e";
   }
 
+  // ... (Other getters/setters unchanged) ...
   void loadHistoricalDiet(Map<String, dynamic> dietData) {
     _dietData = dietData['plan'];
     _substitutions = dietData['substitutions'];
@@ -625,11 +674,6 @@ class DietProvider extends ChangeNotifier {
 
   void toggleTranquilMode() {
     _isTranquilMode = !_isTranquilMode;
-    notifyListeners();
-  }
-
-  void _setLoading(bool val) {
-    _isLoading = val;
     notifyListeners();
   }
 

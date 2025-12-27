@@ -26,7 +26,6 @@ class ShoppingListView extends StatefulWidget {
 
 class _ShoppingListViewState extends State<ShoppingListView> {
   final Set<String> _selectedMealKeys = {};
-
   final List<String> _allDays = [
     "Lunedì",
     "Martedì",
@@ -72,7 +71,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
                     final day = orderedDays[i];
                     final dayPlan =
                         widget.dietData![day] as Map<String, dynamic>?;
-
                     if (dayPlan == null) return const SizedBox.shrink();
 
                     final mealNames = dayPlan.keys.where((k) {
@@ -149,9 +147,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
                     _generateListFromSelection();
                     Navigator.pop(context);
                   },
-                  // Secondary (Orange) for Import Action inside Dialog?
-                  // Or Primary? Usually Dialog actions are Primary.
-                  // Let's keep it Green (Primary) here as it's a "Confirm" action.
                   style: FilledButton.styleFrom(
                     backgroundColor: Theme.of(context).colorScheme.primary,
                   ),
@@ -167,7 +162,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
 
   void _generateListFromSelection() {
     if (_selectedMealKeys.isEmpty) return;
-
     Map<String, Map<String, dynamic>> neededItems = {};
 
     try {
@@ -175,7 +169,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
         var parts = key.split('_');
         var day = parts[0];
         var meal = parts.sublist(1).join('_');
-
         List<dynamic>? foods = widget.dietData![day]?[meal];
         if (foods == null) continue;
 
@@ -186,16 +179,14 @@ class _ShoppingListViewState extends State<ShoppingListView> {
           String qty = food['qty']?.toString() ?? "";
           bool isHeader = qty == "N/A";
           if (isHeader) {
-            if (currentGroup.isNotEmpty) {
+            if (currentGroup.isNotEmpty)
               groupedFoods.add(List.from(currentGroup));
-            }
             currentGroup = [food];
           } else {
-            if (currentGroup.isNotEmpty) {
+            if (currentGroup.isNotEmpty)
               currentGroup.add(food);
-            } else {
+            else
               groupedFoods.add([food]);
-            }
           }
         }
         if (currentGroup.isNotEmpty) groupedFoods.add(List.from(currentGroup));
@@ -242,10 +233,9 @@ class _ShoppingListViewState extends State<ShoppingListView> {
 
       var pantryMatch = widget.pantryItems.where((p) {
         String pName = p.name.trim().toLowerCase();
-        if (pName == cleanNameLower) return true;
-        if (cleanNameLower.contains(pName)) return true;
-        if (pName.contains(cleanNameLower)) return true;
-        return false;
+        return pName == cleanNameLower ||
+            cleanNameLower.contains(pName) ||
+            pName.contains(cleanNameLower);
       }).firstOrNull;
 
       double existingQty = pantryMatch?.quantity ?? 0.0;
@@ -255,11 +245,9 @@ class _ShoppingListViewState extends State<ShoppingListView> {
         String displayQty = finalQty % 1 == 0
             ? finalQty.toInt().toString()
             : finalQty.toStringAsFixed(1);
-
         String entry = (finalQty == 0 || unit.isEmpty)
             ? name
             : "$name ($displayQty $unit)";
-
         if (!newList.any((e) => e.startsWith(name) || e == entry)) {
           newList.add(entry);
           addedCount++;
@@ -269,10 +257,9 @@ class _ShoppingListViewState extends State<ShoppingListView> {
 
     setState(() => _selectedMealKeys.clear());
     widget.onUpdateList(newList);
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text("Aggiunti $addedCount prodotti (sottratto dispensa)!"),
+        content: Text("Aggiunti $addedCount prodotti!"),
         backgroundColor: Colors.green[700],
       ),
     );
@@ -285,7 +272,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
   ) {
     final regExp = RegExp(r'(\d+(?:[.,]\d+)?)');
     final match = regExp.firstMatch(qtyStr);
-
     double qty = 0.0;
     String unit = "";
 
@@ -293,9 +279,8 @@ class _ShoppingListViewState extends State<ShoppingListView> {
       String numPart = match.group(1)!.replaceAll(',', '.');
       qty = double.tryParse(numPart) ?? 0.0;
       unit = qtyStr.replaceAll(match.group(0)!, '').trim();
-      if (name.toLowerCase().contains(unit.toLowerCase()) && unit.length > 2) {
+      if (name.toLowerCase().contains(unit.toLowerCase()) && unit.length > 2)
         unit = "";
-      }
     } else {
       unit = qtyStr;
     }
@@ -303,26 +288,26 @@ class _ShoppingListViewState extends State<ShoppingListView> {
     String cleanName = name.trim();
     if (agg.containsKey(cleanName)) {
       agg[cleanName]!['qty'] += qty;
-      if (agg[cleanName]!['unit'] == "" && unit.isNotEmpty) {
+      if (agg[cleanName]!['unit'] == "" && unit.isNotEmpty)
         agg[cleanName]!['unit'] = unit;
-      }
     } else {
       agg[cleanName] = {'qty': qty, 'unit': unit};
     }
   }
 
-  // --- NEW: Move to Fridge Logic ---
   void _moveCheckedToPantry() {
     int count = 0;
     List<String> newList = [];
 
     for (String item in widget.shoppingList) {
       if (item.startsWith("OK_")) {
-        String content = item.substring(3); // Remove "OK_"
+        String content = item.substring(3);
 
-        // Regex to parse "Name (100.0 g)"
-        // Group 1: Name, Group 2: Qty, Group 3: Unit
-        final RegExp regExp = RegExp(r'^(.*?) \((\d+(?:[.,]\d+)?)\s*(.*)\)$');
+        // [FIX] Relaxed Regex: Handles edited text more gracefully
+        // Matches "Name (100.0 g)" OR just "Name"
+        final RegExp regExp = RegExp(
+          r'^(.*?)(?:\s*\((\d+(?:[.,]\d+)?)\s*(.*)\))?$',
+        );
         final match = regExp.firstMatch(content);
 
         String name = content;
@@ -330,10 +315,16 @@ class _ShoppingListViewState extends State<ShoppingListView> {
         String unit = "pz";
 
         if (match != null) {
-          name = match.group(1)!.trim();
-          String qtyStr = match.group(2)!.replaceAll(',', '.');
-          qty = double.tryParse(qtyStr) ?? 1.0;
-          unit = match.group(3)!.trim();
+          name = match.group(1)?.trim() ?? content;
+          String? qtyStr = match.group(2);
+          String? unitStr = match.group(3);
+
+          if (qtyStr != null) {
+            qty = double.tryParse(qtyStr.replaceAll(',', '.')) ?? 1.0;
+          }
+          if (unitStr != null && unitStr.isNotEmpty) {
+            unit = unitStr.trim();
+          }
         }
 
         widget.onAddToPantry(name, qty, unit);
@@ -370,7 +361,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
               child: FloatingActionButton.extended(
                 heroTag: "moveToPantry",
                 onPressed: _moveCheckedToPantry,
-                // PRIMARY (Green) for Completion Action
                 backgroundColor: Theme.of(context).colorScheme.primary,
                 icon: const Icon(Icons.kitchen, color: Colors.white),
                 label: const Text(
@@ -382,7 +372,6 @@ class _ShoppingListViewState extends State<ShoppingListView> {
           FloatingActionButton.extended(
             heroTag: "importDiet",
             onPressed: _showImportDialog,
-            // SECONDARY (Orange) for Setup/Add Action
             backgroundColor: Theme.of(context).colorScheme.secondary,
             icon: const Icon(Icons.auto_awesome, color: Colors.white),
             label: const Text(
@@ -433,10 +422,8 @@ class _ShoppingListViewState extends State<ShoppingListView> {
                     widget.onUpdateList(list);
                   },
                   child: Card(
-                    // Shape automatically inherited from main.dart
                     child: CheckboxListTile(
                       value: isChecked,
-                      // Consistent Primary Green
                       activeColor: Theme.of(context).colorScheme.primary,
                       title: Text(
                         display,
