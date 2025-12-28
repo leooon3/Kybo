@@ -5,13 +5,10 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Loads from .env automatically
     GOOGLE_API_KEY: str = ""
-    # [FIX] Use a known stable model version as default
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     
-    # [FIX] Use json.loads to correctly parse the list string from env
-    ALLOWED_ORIGINS: list[str] = json.loads(
-        os.getenv("ALLOWED_ORIGINS", '["http://localhost:3000", "https://mydiet-74rg.onrender.com"]')
-    )
+    # [FIX] Allow ALL origins (*) to fix "Failed to fetch" / CORS errors in Flutter Web
+    ALLOWED_ORIGINS: list[str] = ["*"]
 
     # Paths
     DIET_PDF_PATH: str = "temp_dieta.pdf"
