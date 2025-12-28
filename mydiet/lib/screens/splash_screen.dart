@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../services/inventory_service.dart';
 import '../services/notification_service.dart';
 import '../constants.dart';
 import 'home_screen.dart';
+import 'login_screen.dart'; // Ensure you import your LoginScreen
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -16,7 +20,8 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   String _status = "Avvio in corso...";
-  bool _hasError = false;
+  bool _isMaintenance = false;
+  String _maintenanceMsg = "";
 
   @override
   void initState() {
@@ -26,97 +31,167 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _initializeApp() async {
     try {
-      // 1. Environment Variables
+      // 1. Load Env
       try {
         await dotenv.load(fileName: ".env");
-      } catch (e) {
-        debugPrint("Env Warning: $e");
-      }
+      } catch (_) {}
 
-      // 2. Firebase
-      setState(() => _status = "Connessione Cloud...");
+      // 2. Firebase Core
+      setState(() => _status = "Connessione Server...");
       await Firebase.initializeApp();
 
-      // 3. Services & Permissions (BLOCKING)
-      setState(() => _status = "Richiesta Permessi...");
+      // 3. KILL SWITCH (Remote Config)
+      setState(() => _status = "Verifica aggiornamenti...");
+      final remoteConfig = FirebaseRemoteConfig.instance;
+      await remoteConfig.setConfigSettings(
+        RemoteConfigSettings(
+          fetchTimeout: const Duration(minutes: 1),
+          minimumFetchInterval: Duration.zero, // Keep low for beta testing
+        ),
+      );
 
-      // Initialize Notification Service
-      final notifs = NotificationService();
-      await notifs.init();
+      // Defaults
+      await remoteConfig.setDefaults({
+        "maintenance_mode": false,
+        "maintenance_message": "App in manutenzione. Riprova più tardi.",
+      });
 
-      // Request Permissions explicitly and wait for user input
-      await notifs.requestPermissions();
+      await remoteConfig.fetchAndActivate();
 
-      // Subscribe to topics (safe to do after init)
-      try {
-        await FirebaseMessaging.instance.subscribeToTopic('all_users');
-      } catch (e) {
-        debugPrint("Topic Subscribe Error: $e");
+      bool maintenanceMode = remoteConfig.getBool('maintenance_mode');
+      if (maintenanceMode) {
+        setState(() {
+          _isMaintenance = true;
+          _maintenanceMsg = remoteConfig.getString('maintenance_message');
+        });
+        return; // STOP EXECUTION HERE
       }
 
-      // 4. Load Business Logic
-      setState(() => _status = "Caricamento Servizi...");
+      // 4. Notification & Permissions
+      setState(() => _status = "Setup Notifiche...");
+      final notifs = NotificationService();
+      await notifs.init();
+      // Non-blocking permission request is better for UX, but keeping your logic:
+      await notifs.requestPermissions();
+      try {
+        await FirebaseMessaging.instance.subscribeToTopic('all_users');
+      } catch (_) {}
 
-      // Blocking Inventory init
+      // 5. User Status Check (Banned/Active)
+      User? currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        setState(() => _status = "Verifica Account...");
+
+        // Force refresh token to ensure validity
+        await currentUser.reload();
+
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
+
+        if (userDoc.exists) {
+          final data = userDoc.data();
+          final isActive =
+              data?['is_active'] ?? true; // Default to true if missing
+
+          if (!isActive) {
+            await FirebaseAuth.instance.signOut();
+            if (mounted) _showBannedDialog();
+            return;
+          }
+        }
+      }
+
+      // 6. Business Logic
+      setState(() => _status = "Caricamento dati...");
       await InventoryService.initialize();
 
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const MainScreen()),
-        );
+        // Navigate based on Auth State
+        Widget nextScreen = (FirebaseAuth.instance.currentUser != null)
+            ? const MainScreen()
+            : const LoginScreen(); // Redirect to Login if no user
+
+        Navigator.of(
+          context,
+        ).pushReplacement(MaterialPageRoute(builder: (_) => nextScreen));
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _hasError = true;
-          _status = "Errore di avvio:\n$e";
-        });
+        // If it's a critical remote config error, ignore and proceed,
+        // otherwise show error.
+        setState(() => _status = "Errore: $e");
       }
     }
   }
 
+  void _showBannedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Accesso Negato"),
+        content: const Text(
+          "Il tuo account è stato disabilitato dall'amministratore.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+              );
+            },
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.primary,
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Image.asset(
-                'assets/icon.png',
-                width: 100,
-                height: 100,
-                errorBuilder: (_, _, _) =>
-                    const Icon(Icons.eco, size: 80, color: Colors.white),
-              ),
-              const SizedBox(height: 24),
-              if (_hasError) ...[
-                const Icon(
-                  Icons.error_outline,
-                  size: 48,
-                  color: AppColors.secondary,
+    if (_isMaintenance) {
+      return Scaffold(
+        backgroundColor: AppColors.surface,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.build_circle, size: 80, color: Colors.orange),
+                const SizedBox(height: 24),
+                const Text(
+                  "Manutenzione in corso",
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  _status,
+                  _maintenanceMsg,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(fontSize: 16),
                 ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: _initializeApp,
-                  child: const Text("Riprova"),
-                ),
-              ] else ...[
-                const CircularProgressIndicator(color: Colors.white),
-                const SizedBox(height: 16),
-                Text(_status, style: const TextStyle(color: Colors.white70)),
               ],
-            ],
+            ),
           ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: AppColors.primary,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Image.asset('assets/icon.png', width: 100, height: 100),
+            const SizedBox(height: 24),
+            const CircularProgressIndicator(color: Colors.white),
+            const SizedBox(height: 16),
+            Text(_status, style: const TextStyle(color: Colors.white70)),
+          ],
         ),
       ),
     );

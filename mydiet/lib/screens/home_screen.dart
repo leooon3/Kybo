@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // [NEW]
 import '../providers/diet_provider.dart';
 import '../models/active_swap.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/auth_service.dart';
-import '../constants.dart'; // [FIX] Import constants for Colors
+import '../constants.dart';
 import 'diet_view.dart';
 import 'pantry_view.dart';
 import 'shopping_list_view.dart';
@@ -24,6 +25,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   int _currentIndex = 0;
   late TabController _tabController;
   final AuthService _auth = AuthService();
+
+  // [NEW] User Role State
+  String _userRole = 'independent';
 
   final List<String> days = [
     "Lunedì",
@@ -44,6 +48,28 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       initialIndex: today < 0 ? 0 : today,
       vsync: this,
     );
+    _fetchUserRole();
+  }
+
+  // [NEW] Fetch role to determine UI
+  Future<void> _fetchUserRole() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        if (doc.exists && mounted) {
+          setState(() {
+            // Default to 'independent' if field is missing
+            _userRole = doc.data()?['role'] ?? 'independent';
+          });
+        }
+      } catch (e) {
+        debugPrint("Role Fetch Error: $e");
+      }
+    }
   }
 
   // --- ACTIONS ---
@@ -263,16 +289,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                       "cena": _formatTime(tCena),
                     };
                     await storage.saveMealTimes(newTimes);
-
                     final notifs = NotificationService();
                     await notifs.init();
                     if (await notifs.requestPermissions()) {
                       await notifs.scheduleAllMeals();
-                      if (mounted) {
+                      if (mounted)
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text("Orari aggiornati!")),
                         );
-                      }
                     }
                   },
                   child: const Text("Salva"),
@@ -384,8 +408,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 ],
               ),
             ),
-
-            // Global Loading Overlay
             if (provider.isLoading)
               Container(
                 color: Colors.black45,
@@ -405,6 +427,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     DietProvider provider,
     ColorScheme colors,
   ) {
+    // [NEW] Check role to toggle Upload Button
+    final bool canUpload = _userRole == 'independent' || _userRole == 'admin';
+
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
@@ -452,11 +477,15 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             ),
           ],
           const Divider(),
-          ListTile(
-            leading: const Icon(Icons.upload_file),
-            title: const Text("Carica Dieta PDF"),
-            onTap: () => _uploadDiet(context),
-          ),
+
+          // [NEW] Conditionally Render Upload
+          if (canUpload)
+            ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: const Text("Carica Dieta PDF"),
+              onTap: () => _uploadDiet(context),
+            ),
+
           ListTile(
             leading: const Icon(Icons.access_time_filled),
             title: const Text("Imposta Orari Pasti"),
@@ -519,14 +548,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   ),
                 );
               } catch (e) {
-                if (mounted) {
+                if (mounted)
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text("Errore: ${provider.error ?? e}"),
                       backgroundColor: Colors.red,
                     ),
                   );
-                }
               }
             }
           },

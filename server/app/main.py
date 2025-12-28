@@ -153,6 +153,49 @@ async def upload_diet(
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
 
+@app.post("/upload-diet/{target_uid}", response_model=DietResponse)
+@limiter.limit("10/minute")
+async def upload_diet_admin(
+    request: Request,
+    target_uid: str,
+    file: UploadFile = File(...),
+    fcm_token: Optional[str] = Form(None),
+    requester_id: str = Depends(verify_token) 
+):
+    """
+    Admin Endpoint: Uploads a diet for a specific target_uid.
+    """
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF allowed")
+
+    temp_filename = f"{uuid.uuid4()}.pdf"
+    # Log both the Admin (requester) and the Target (client)
+    log = logger.bind(admin_id=requester_id, target_uid=target_uid, filename=file.filename)
+    
+    try:
+        await save_upload_file(file, temp_filename)
+        log.info("admin_upload_start")
+        
+        # Parse logic is identical, just triggered by Admin
+        raw_data = await run_in_threadpool(diet_parser.parse_complex_diet, temp_filename)
+        final_data = _convert_to_app_format(raw_data)
+        
+        # If the target user has a token registered (passed by Admin or retrieved via DB in future)
+        if fcm_token:
+            await run_in_threadpool(notification_service.send_diet_ready, fcm_token)
+            
+        log.info("admin_upload_success")
+        return final_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("admin_upload_failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Processing failed")
+    finally:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+            
 @app.post("/scan-receipt")
 @limiter.limit("10/minute")
 async def scan_receipt(
