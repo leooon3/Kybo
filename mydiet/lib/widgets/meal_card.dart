@@ -1,30 +1,62 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import '../models/active_swap.dart';
-import '../constants.dart';
-import '../providers/diet_provider.dart';
 
 class MealCard extends StatelessWidget {
   final String day;
   final String mealName;
   final List<dynamic> foods;
   final Map<String, ActiveSwap> activeSwaps;
+  final Map<String, bool> availabilityMap;
   final bool isTranquilMode;
   final Function(String key, int currentCad) onSwap;
   final Function(int index, String name, String qty)? onEdit;
+  final Function(int index) onEat;
 
-  // [FIX] Lista Estesa con Olive, Funghi, Mais e Condimenti
   static const Set<String> _relaxableFoods = {
-    // Frutta
-    'mela', 'mele', 'pera', 'pere', 'banana', 'banane', 'arancia', 'arance',
-    'mandarino', 'mandarini', 'kiwi', 'ananas', 'fragola', 'fragole',
-    'ciliegia', 'ciliegie', 'albicocca', 'albicocche', 'pesca', 'pesche',
-    'anguria', 'melone', 'uva', 'prugna', 'prugne', 'limone', 'pompelmo',
-    'frutti di bosco', 'mirtilli', 'lamponi', 'more', 'cachi', 'fico', 'fichi',
-    'melograno', 'avocado', 'mango', 'papaya',
-
-    // Verdura e Ortaggi
-    'zucchina', 'zucchine', 'melanzana', 'melanzane', 'peperone', 'peperoni',
+    'mela',
+    'mele',
+    'pera',
+    'pere',
+    'banana',
+    'banane',
+    'arancia',
+    'arance',
+    'mandarino',
+    'mandarini',
+    'kiwi',
+    'ananas',
+    'fragola',
+    'fragole',
+    'ciliegia',
+    'ciliegie',
+    'albicocca',
+    'albicocche',
+    'pesca',
+    'pesche',
+    'anguria',
+    'melone',
+    'uva',
+    'prugna',
+    'prugne',
+    'limone',
+    'pompelmo',
+    'frutti di bosco',
+    'mirtilli',
+    'lamponi',
+    'more',
+    'cachi',
+    'fico',
+    'fichi',
+    'melograno',
+    'avocado',
+    'mango',
+    'papaya',
+    'zucchina',
+    'zucchine',
+    'melanzana',
+    'melanzane',
+    'peperone',
+    'peperoni',
     'pomodoro',
     'pomodori',
     'insalata',
@@ -32,21 +64,71 @@ class MealCard extends StatelessWidget {
     'rucola',
     'spinaci',
     'spinacio',
-    'bieta', 'bietola', 'cicoria', 'cavolo', 'cavoli', 'verza', 'cappuccio',
-    'broccoli', 'broccolo', 'cavolfiore', 'fagiolino', 'fagiolini', 'asparago',
-    'asparagi', 'carciofo', 'carciofi', 'finocchio', 'finocchi', 'sedano',
-    'carota', 'carote', 'cetriolo', 'cetrioli', 'zucca', 'patata', 'patate',
-    'cipolla', 'cipolle', 'aglio', 'scalogno', 'porro', 'porri', 'ravanello',
-    'ravanelli', 'rapa', 'cime di rapa', 'radicchio', 'valeriana', 'indivia',
-    'fungo', 'funghi', 'oliva', 'olive', 'mais',
-
-    // Legumi
-    'fagioli', 'ceci', 'lenticchie', 'piselli', 'fave', 'soia', 'edamame',
-
-    // Condimenti e Generici
-    'olio', 'aceto', 'sale', 'pepe', 'spezie',
-    'verdura', 'verdure', 'frutta', 'frutto', 'ortaggi', 'minestrone',
-    'passato di verdure', 'vellutata', 'contorno',
+    'bieta',
+    'bietola',
+    'cicoria',
+    'cavolo',
+    'cavoli',
+    'verza',
+    'cappuccio',
+    'broccoli',
+    'broccolo',
+    'cavolfiore',
+    'fagiolino',
+    'fagiolini',
+    'asparago',
+    'asparagi',
+    'carciofo',
+    'carciofi',
+    'finocchio',
+    'finocchi',
+    'sedano',
+    'carota',
+    'carote',
+    'cetriolo',
+    'cetrioli',
+    'zucca',
+    'patata',
+    'patate',
+    'cipolla',
+    'cipolle',
+    'aglio',
+    'scalogno',
+    'porro',
+    'porri',
+    'ravanello',
+    'ravanelli',
+    'rapa',
+    'cime di rapa',
+    'radicchio',
+    'valeriana',
+    'indivia',
+    'fungo',
+    'funghi',
+    'oliva',
+    'olive',
+    'mais',
+    'fagioli',
+    'ceci',
+    'lenticchie',
+    'piselli',
+    'fave',
+    'soia',
+    'edamame',
+    'olio',
+    'aceto',
+    'sale',
+    'pepe',
+    'spezie',
+    'verdura',
+    'verdure',
+    'frutta',
+    'frutto',
+    'ortaggi',
+    'minestrone',
+    'passato di verdure',
+    'vellutata',
+    'contorno',
   };
 
   const MealCard({
@@ -55,10 +137,48 @@ class MealCard extends StatelessWidget {
     required this.mealName,
     required this.foods,
     required this.activeSwaps,
+    required this.availabilityMap,
     required this.isTranquilMode,
     required this.onSwap,
+    required this.onEat,
     this.onEdit,
   });
+
+  String _formatDisplayQty(String rawQty) {
+    if (rawQty.isEmpty || rawQty == "N/A") return "";
+    final numRegExp = RegExp(r'(\d+[.,]?\d*)');
+    final match = numRegExp.firstMatch(rawQty);
+    String number = match?.group(1) ?? "";
+
+    String unit = "";
+    String lower = rawQty.toLowerCase();
+
+    if (lower.contains('kg'))
+      unit = "kg";
+    else if (lower.contains('mg'))
+      unit = "mg";
+    else if (lower.contains('ml'))
+      unit = "ml";
+    else if (lower.contains('l') && !lower.contains('ml'))
+      unit = "L";
+    else if (RegExp(r'\b(gr|g|grammi)\b').hasMatch(lower))
+      unit = "g";
+    else if (lower.contains('vasett'))
+      unit = "vasetto";
+    else if (lower.contains('cucchiain'))
+      unit = "cucchiaino";
+    else if (lower.contains('cucchiai'))
+      unit = "cucchiaio";
+    else if (lower.contains('fett'))
+      unit = "fette";
+    else if (lower.contains('pz'))
+      unit = "pz";
+
+    if (number.isNotEmpty && unit.isNotEmpty) {
+      return "$number $unit";
+    }
+    return rawQty;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,10 +206,11 @@ class MealCard extends StatelessWidget {
         if (currentGroup.isNotEmpty) groupedFoods.add(List.from(currentGroup));
         currentGroup = [food];
       } else {
-        if (currentGroup.isNotEmpty)
+        if (currentGroup.isNotEmpty) {
           currentGroup.add(food);
-        else
+        } else {
           groupedFoods.add([food]);
+        }
       }
     }
     if (currentGroup.isNotEmpty) groupedFoods.add(List.from(currentGroup));
@@ -115,7 +236,6 @@ class MealCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-
             ...groupedFoods.asMap().entries.map((entry) {
               int groupIndex = entry.key;
               List<dynamic> group = entry.value;
@@ -130,11 +250,7 @@ class MealCard extends StatelessWidget {
               final String availabilityKey =
                   "${day}_${mealName}_$currentGroupStart";
               final isAvailable =
-                  !isConsumed &&
-                  (Provider.of<DietProvider>(
-                        context,
-                      ).availabilityMap[availabilityKey] ??
-                      false);
+                  !isConsumed && (availabilityMap[availabilityKey] ?? false);
 
               int cadCode =
                   int.tryParse(header['cad_code']?.toString() ?? "0") ?? 0;
@@ -201,7 +317,6 @@ class MealCard extends StatelessWidget {
                           size: 20,
                         ),
                       ),
-
                     if (isConsumed)
                       Padding(
                         padding: const EdgeInsets.only(top: 4, right: 12),
@@ -211,15 +326,18 @@ class MealCard extends StatelessWidget {
                           size: 20,
                         ),
                       ),
-
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: itemsToShow.asMap().entries.map((itemEntry) {
                           var item = itemEntry.value;
                           String name = item['name']?.toString() ?? "Piatto";
-                          String qty = item['qty']?.toString() ?? "";
-                          bool isHeaderItem = (qty == "N/A" || qty.isEmpty);
+                          String rawQty = item['qty']?.toString() ?? "";
+
+                          String displayQty = _formatDisplayQty(rawQty);
+
+                          bool isHeaderItem =
+                              (rawQty == "N/A" || rawQty.isEmpty);
 
                           bool shouldHideQty = false;
                           if (isTranquilMode) {
@@ -236,9 +354,9 @@ class MealCard extends StatelessWidget {
                           if (shouldHideQty) {
                             textDisplay = name;
                           } else {
-                            textDisplay = (isHeaderItem || qty.isEmpty)
+                            textDisplay = (isHeaderItem || displayQty.isEmpty)
                                 ? name
-                                : "$name ($qty)";
+                                : "$name ($displayQty)";
                           }
 
                           return Padding(
@@ -265,7 +383,6 @@ class MealCard extends StatelessWidget {
                         }).toList(),
                       ),
                     ),
-
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -279,7 +396,6 @@ class MealCard extends StatelessWidget {
                               onPressed: () => onSwap(swapKey, cadCode),
                             ),
                           ),
-
                         if (isToday && !isConsumed)
                           SizedBox(
                             width: 40,
@@ -287,69 +403,7 @@ class MealCard extends StatelessWidget {
                             child: IconButton(
                               icon: const Icon(Icons.check, size: 22),
                               color: Colors.green,
-                              onPressed: () {
-                                if (isAvailable) {
-                                  Provider.of<DietProvider>(
-                                    context,
-                                    listen: false,
-                                  ).consumeMeal(
-                                    day,
-                                    mealName,
-                                    currentGroupStart,
-                                  );
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text("Buon appetito!"),
-                                      duration: Duration(milliseconds: 800),
-                                    ),
-                                  );
-                                } else {
-                                  showDialog(
-                                    context: context,
-                                    builder: (ctx) => AlertDialog(
-                                      title: const Text("Ingrediente Mancante"),
-                                      content: const Text(
-                                        "Questo piatto non risulta disponibile in frigo.\nVuoi segnarlo come mangiato lo stesso?",
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(ctx),
-                                          child: const Text(
-                                            "Annulla",
-                                            style: TextStyle(
-                                              color: Colors.grey,
-                                            ),
-                                          ),
-                                        ),
-                                        TextButton(
-                                          onPressed: () {
-                                            Navigator.pop(ctx);
-                                            Provider.of<DietProvider>(
-                                              context,
-                                              listen: false,
-                                            ).consumeMeal(
-                                              day,
-                                              mealName,
-                                              currentGroupStart,
-                                            );
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              const SnackBar(
-                                                content: Text("Buon appetito!"),
-                                                duration: Duration(
-                                                  milliseconds: 800,
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                          child: const Text("Sì, procedi"),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }
-                              },
+                              onPressed: () => onEat(currentGroupStart),
                             ),
                           ),
                       ],

@@ -1,8 +1,9 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
-import 'package:flutter_timezone/flutter_timezone.dart'; // NEW IMPORT
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart'; // [NEW] Required for permissions
 import 'dart:io';
 import 'storage_service.dart';
 
@@ -36,6 +37,7 @@ class NotificationService {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/launcher_icon');
 
+    // [NOTE] request...Permission: false allows us to ask manually later
     const DarwinInitializationSettings initializationSettingsDarwin =
         DarwinInitializationSettings(
           requestSoundPermission: false,
@@ -59,14 +61,18 @@ class NotificationService {
     _isInitialized = true;
   }
 
+  /// Requests Notifications and Exact Alarm permissions.
+  /// Returns true if at least notifications were granted.
   Future<bool> requestPermissions() async {
+    bool notificationsGranted = false;
+
     if (Platform.isIOS) {
       final bool? result = await flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin
           >()
           ?.requestPermissions(alert: true, badge: true, sound: true);
-      return result ?? false;
+      notificationsGranted = result ?? false;
     } else if (Platform.isAndroid) {
       final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
           flutterLocalNotificationsPlugin
@@ -74,11 +80,19 @@ class NotificationService {
                 AndroidFlutterLocalNotificationsPlugin
               >();
 
+      // 1. Request Notification Permission (Android 13+)
       final bool? granted = await androidImplementation
           ?.requestNotificationsPermission();
-      return granted ?? false;
+      notificationsGranted = granted ?? false;
+
+      // 2. Request Exact Alarm Permission (Required for precise scheduling)
+      // This is often a separate system dialog or setting.
+      final status = await Permission.scheduleExactAlarm.status;
+      if (status.isDenied) {
+        await Permission.scheduleExactAlarm.request();
+      }
     }
-    return false;
+    return notificationsGranted;
   }
 
   // --- DYNAMIC SCHEDULING ---

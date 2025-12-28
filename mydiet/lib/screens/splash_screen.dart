@@ -26,7 +26,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _initializeApp() async {
     try {
-      // 1. Env
+      // 1. Environment Variables
       try {
         await dotenv.load(fileName: ".env");
       } catch (e) {
@@ -37,11 +37,25 @@ class _SplashScreenState extends State<SplashScreen> {
       setState(() => _status = "Connessione Cloud...");
       await Firebase.initializeApp();
 
-      // 3. Services
-      setState(() => _status = "Caricamento Servizi...");
+      // 3. Services & Permissions (BLOCKING)
+      setState(() => _status = "Richiesta Permessi...");
 
-      // Non-blocking notifications init
-      _initNotifications();
+      // Initialize Notification Service
+      final notifs = NotificationService();
+      await notifs.init();
+
+      // Request Permissions explicitly and wait for user input
+      await notifs.requestPermissions();
+
+      // Subscribe to topics (safe to do after init)
+      try {
+        await FirebaseMessaging.instance.subscribeToTopic('all_users');
+      } catch (e) {
+        debugPrint("Topic Subscribe Error: $e");
+      }
+
+      // 4. Load Business Logic
+      setState(() => _status = "Caricamento Servizi...");
 
       // Blocking Inventory init
       await InventoryService.initialize();
@@ -58,17 +72,6 @@ class _SplashScreenState extends State<SplashScreen> {
           _status = "Errore di avvio:\n$e";
         });
       }
-    }
-  }
-
-  Future<void> _initNotifications() async {
-    try {
-      final notifs = NotificationService();
-      await notifs.init();
-      // Safe subscribe
-      await FirebaseMessaging.instance.subscribeToTopic('all_users');
-    } catch (e) {
-      debugPrint("Notif Init Error (Safe): $e");
     }
   }
 

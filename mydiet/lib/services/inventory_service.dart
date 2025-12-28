@@ -90,10 +90,12 @@ bool _checkMissingIngredients(
           continue;
         }
 
+        // [FIX] Ensure item exists AND has quantity > 0.1
         bool found = pantry.any(
           (item) =>
-              item.name.toLowerCase().contains(dishName) ||
-              dishName.contains(item.name.toLowerCase()),
+              (item.name.toLowerCase().contains(dishName) ||
+                  dishName.contains(item.name.toLowerCase())) &&
+              item.quantity > 0.1,
         );
 
         if (!found) return true;
