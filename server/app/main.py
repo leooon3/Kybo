@@ -7,6 +7,8 @@ from typing import Optional, List, Dict
 
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
+# [CHANGE] Removed top-level remote_config import to prevent startup race conditions
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,15 +17,6 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from pydantic import Json, BaseModel
-import firebase_admin
-from firebase_admin import credentials, auth, firestore
-
-# [FIX] Safe Import to prevent crash if cache is old
-try:
-    from firebase_admin import remote_config
-except ImportError:
-    remote_config = None  # Prevents server crash
-    print("⚠️ WARNING: remote_config could not be imported. Clear Build Cache on Render.") 
 
 from app.services.diet_service import DietParser
 from app.services.receipt_service import ReceiptScanner
@@ -56,6 +49,7 @@ structlog.configure(
 )
 logger = structlog.get_logger()
 
+# --- FIREBASE INIT ---
 if not firebase_admin._apps:
     try:
         if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
@@ -95,6 +89,9 @@ class CreateUserRequest(BaseModel):
     first_name: str
     last_name: str
     parent_id: Optional[str] = None
+
+class MaintenanceRequest(BaseModel):
+    enabled: bool
 
 # --- UTILS ---
 async def save_upload_file(file: UploadFile, filename: str) -> None:
@@ -192,23 +189,19 @@ async def upload_diet_admin(
         await save_upload_file(file, temp_filename)
         log.info("admin_upload_start")
         
-        # [NEW LOGIC] Check for Custom Parser Instructions
         db = firebase_admin.firestore.client()
         custom_prompt = None
         
-        # 1. Check Target User
         user_doc = db.collection('users').document(target_uid).get()
         if user_doc.exists:
             user_data = user_doc.to_dict()
             parent_id = user_data.get('parent_id')
             
-            # 2. If user has a Nutritionist (parent), use THEIR parser settings
             if parent_id:
                 parent_doc = db.collection('users').document(parent_id).get()
                 if parent_doc.exists:
                     custom_prompt = parent_doc.to_dict().get('custom_parser_prompt')
 
-        # 3. Parse with dynamic prompt
         raw_data = await run_in_threadpool(
             diet_parser.parse_complex_diet, 
             temp_filename, 
@@ -275,7 +268,6 @@ async def admin_create_user(
         
         final_parent_id = body.parent_id
         
-        # If created by Nutritionist, force parent_id link
         if requester_doc.exists:
             requester_data = requester_doc.to_dict()
             requester_role = requester_data.get('role', 'user')
@@ -370,9 +362,6 @@ async def upload_parser_config(
     file: UploadFile = File(...),
     requester_id: str = Depends(verify_token)
 ):
-    """
-    Saves a custom AI System Instruction (.txt) for a specific Nutritionist.
-    """
     if not file.filename.lower().endswith(".txt"):
         raise HTTPException(status_code=400, detail="Parser must be a .txt file")
 
@@ -391,6 +380,60 @@ async def upload_parser_config(
 
     except Exception as e:
         logger.error("parser_upload_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- REMOTE CONFIG MANAGEMENT (LAZY IMPORT FIX) ---
+
+@app.get("/admin/config/maintenance")
+async def get_maintenance_status(requester_id: str = Depends(verify_token)):
+    try:
+        # [LAZY IMPORT] Fixes circular import / init order issues
+        from firebase_admin import remote_config
+        
+        template = remote_config.get_template()
+        maintenance_param = template.parameters.get('maintenance_mode')
+        
+        if maintenance_param and maintenance_param.default_value:
+            is_active = maintenance_param.default_value.value.lower() == 'true'
+            return {"enabled": is_active}
+        
+        return {"enabled": False}
+    except ImportError:
+        logger.error("remote_config_import_error", detail="Library installed but import failed")
+        raise HTTPException(status_code=500, detail="Remote Config library error")
+    except Exception as e:
+        logger.error("remote_config_read_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/config/maintenance")
+async def set_maintenance_status(
+    body: MaintenanceRequest,
+    requester_id: str = Depends(verify_token)
+):
+    try:
+        # [LAZY IMPORT] Fixes circular import / init order issues
+        from firebase_admin import remote_config
+        
+        template = remote_config.get_template()
+        
+        template.parameters['maintenance_mode'] = remote_config.Parameter(
+            default_value=remote_config.ParameterValue("true" if body.enabled else "false"),
+            description="Global Maintenance Mode Switch"
+        )
+        
+        remote_config.validate_template(template)
+        remote_config.publish_template(template)
+        
+        status_str = "ENABLED" if body.enabled else "DISABLED"
+        logger.info("maintenance_mode_updated", status=status_str, admin=requester_id)
+        
+        return {"message": f"Maintenance Mode is now {status_str}"}
+
+    except ImportError:
+        logger.error("remote_config_import_error", detail="Library installed but import failed")
+        raise HTTPException(status_code=500, detail="Remote Config library error")
+    except Exception as e:
+        logger.error("remote_config_write_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 def _convert_to_app_format(gemini_output) -> DietResponse:
@@ -495,55 +538,3 @@ def _convert_to_app_format(gemini_output) -> DietResponse:
         plan=app_plan,
         substitutions=app_substitutions
     )
-# --- REMOTE CONFIG MANAGEMENT ---
-
-@app.get("/admin/config/maintenance")
-async def get_maintenance_status(requester_id: str = Depends(verify_token)):
-    if remote_config is None:
-        return {"enabled": False, "error": "Library missing"}
-    try:
-        template = remote_config.get_template()
-        # Check if parameter exists, otherwise default to False
-        maintenance_param = template.parameters.get('maintenance_mode')
-        
-        if maintenance_param and maintenance_param.default_value:
-            # The value is returned as a string "true" or "false" usually
-            is_active = maintenance_param.default_value.value.lower() == 'true'
-            return {"enabled": is_active}
-        
-        return {"enabled": False}
-    except Exception as e:
-        logger.error("remote_config_read_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-class MaintenanceRequest(BaseModel):
-    enabled: bool
-
-@app.post("/admin/config/maintenance")
-async def set_maintenance_status(
-    body: MaintenanceRequest,
-    requester_id: str = Depends(verify_token)
-):
-    if remote_config is None:
-        raise HTTPException(status_code=503, detail="Remote Config library missing. Clear Build Cache.")
-    try:
-        template = remote_config.get_template()
-        
-        # Update or Create the parameter
-        template.parameters['maintenance_mode'] = remote_config.Parameter(
-            default_value=remote_config.ParameterValue("true" if body.enabled else "false"),
-            description="Global Maintenance Mode Switch"
-        )
-        
-        # Publish the change
-        remote_config.validate_template(template)
-        remote_config.publish_template(template)
-        
-        status_str = "ENABLED" if body.enabled else "DISABLED"
-        logger.info("maintenance_mode_updated", status=status_str, admin=requester_id)
-        
-        return {"message": f"Maintenance Mode is now {status_str}"}
-
-    except Exception as e:
-        logger.error("remote_config_write_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
