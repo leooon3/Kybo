@@ -15,7 +15,15 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from pydantic import Json, BaseModel
-from firebase_admin import remote_config 
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
+
+# [FIX] Safe Import to prevent crash if cache is old
+try:
+    from firebase_admin import remote_config
+except ImportError:
+    remote_config = None  # Prevents server crash
+    print("⚠️ WARNING: remote_config could not be imported. Clear Build Cache on Render.") 
 
 from app.services.diet_service import DietParser
 from app.services.receipt_service import ReceiptScanner
