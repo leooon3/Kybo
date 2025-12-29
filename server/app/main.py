@@ -382,27 +382,27 @@ async def upload_parser_config(
         logger.error("parser_upload_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- REMOTE CONFIG MANAGEMENT (LAZY IMPORT FIX) ---
+
+# --- MAINTENANCE MANAGEMENT (FIRESTORE BACKED) ---
+# Switched from Remote Config to Firestore for stability and real-time updates.
 
 @app.get("/admin/config/maintenance")
 async def get_maintenance_status(requester_id: str = Depends(verify_token)):
     try:
-        # [LAZY IMPORT] Fixes circular import / init order issues
-        from firebase_admin import remote_config
+        db = firebase_admin.firestore.client()
+        # We store config in a dedicated collection 'config', document 'global'
+        config_ref = db.collection('config').document('global')
+        doc = config_ref.get()
         
-        template = remote_config.get_template()
-        maintenance_param = template.parameters.get('maintenance_mode')
+        if doc.exists:
+            data = doc.to_dict()
+            return {"enabled": data.get('maintenance_mode', False)}
         
-        if maintenance_param and maintenance_param.default_value:
-            is_active = maintenance_param.default_value.value.lower() == 'true'
-            return {"enabled": is_active}
-        
+        # Default to False if document doesn't exist
         return {"enabled": False}
-    except ImportError:
-        logger.error("remote_config_import_error", detail="Library installed but import failed")
-        raise HTTPException(status_code=500, detail="Remote Config library error")
+
     except Exception as e:
-        logger.error("remote_config_read_error", error=str(e))
+        logger.error("maintenance_read_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/admin/config/maintenance")
@@ -411,130 +411,21 @@ async def set_maintenance_status(
     requester_id: str = Depends(verify_token)
 ):
     try:
-        # [LAZY IMPORT] Fixes circular import / init order issues
-        from firebase_admin import remote_config
+        db = firebase_admin.firestore.client()
+        config_ref = db.collection('config').document('global')
         
-        template = remote_config.get_template()
-        
-        template.parameters['maintenance_mode'] = remote_config.Parameter(
-            default_value=remote_config.ParameterValue("true" if body.enabled else "false"),
-            description="Global Maintenance Mode Switch"
-        )
-        
-        remote_config.validate_template(template)
-        remote_config.publish_template(template)
+        # Update (or create) the maintenance_mode field
+        config_ref.set({
+            'maintenance_mode': body.enabled,
+            'updated_at': firebase_admin.firestore.SERVER_TIMESTAMP,
+            'updated_by': requester_id
+        }, merge=True)
         
         status_str = "ENABLED" if body.enabled else "DISABLED"
         logger.info("maintenance_mode_updated", status=status_str, admin=requester_id)
         
         return {"message": f"Maintenance Mode is now {status_str}"}
 
-    except ImportError:
-        logger.error("remote_config_import_error", detail="Library installed but import failed")
-        raise HTTPException(status_code=500, detail="Remote Config library error")
     except Exception as e:
-        logger.error("remote_config_write_error", error=str(e))
+        logger.error("maintenance_write_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
-
-def _convert_to_app_format(gemini_output) -> DietResponse:
-    if not gemini_output:
-        return DietResponse(plan={}, substitutions={})
-
-    app_plan = {}
-    app_substitutions = {}
-
-    raw_subs = gemini_output.get('tabella_sostituzioni', [])
-    cad_lookup_map = {} 
-
-    for group in raw_subs:
-        cad_code = group.get('cad_code', 0)
-        titolo = group.get('titolo', "").strip()
-        
-        if cad_code > 0:
-            cad_key = str(cad_code)
-            cad_lookup_map[titolo.lower()] = cad_code
-            
-            options = []
-            for opt in group.get('opzioni', []):
-                options.append(SubstitutionOption(
-                    name=opt.get('nome', 'Unknown'),
-                    qty=opt.get('quantita', '')
-                ))
-            
-            if not options: 
-                options.append(SubstitutionOption(name=titolo, qty=""))
-
-            app_substitutions[cad_key] = SubstitutionGroup(
-                name=titolo,
-                options=options
-            )
-
-    raw_plan = gemini_output.get('piano_settimanale', [])
-    
-    DAY_MAPPING = {
-        "lun": "Lunedì", "mon": "Lunedì",
-        "mar": "Martedì", "tue": "Martedì",
-        "mer": "Mercoledì", "wed": "Mercoledì",
-        "gio": "Giovedì", "thu": "Giovedì",
-        "ven": "Venerdì", "fri": "Venerdì",
-        "sab": "Sabato", "sat": "Sabato",
-        "dom": "Domenica", "sun": "Domenica"
-    }
-
-    for giorno in raw_plan:
-        raw_day_name = giorno.get('giorno', 'Sconosciuto').strip().lower()
-        day_name = "Sconosciuto"
-        
-        if len(raw_day_name) >= 3:
-            prefix = raw_day_name[:3]
-            day_name = DAY_MAPPING.get(prefix, raw_day_name.capitalize())
-        else:
-            day_name = raw_day_name.capitalize()
-
-        if day_name not in app_plan:
-            app_plan[day_name] = {}
-
-        for pasto in giorno.get('pasti', []):
-            meal_name = normalize_meal_name(pasto.get('tipo_pasto', ''))
-            
-            items = []
-            for piatto in pasto.get('elenco_piatti', []):
-                dish_name = str(piatto.get('nome_piatto') or 'Piatto')
-                final_cad = piatto.get('cad_code', 0)
-                if final_cad == 0:
-                    final_cad = cad_lookup_map.get(dish_name.lower(), 0)
-
-                formatted_ingredients = []
-                for ing in piatto.get('ingredienti', []):
-                    formatted_ingredients.append(Ingredient(
-                        name=str(ing.get('nome') or ''),
-                        qty=str(ing.get('quantita') or '')
-                    ))
-
-                items.append(Dish(
-                    name=dish_name,
-                    qty=str(piatto.get('quantita_totale') or ''),
-                    cad_code=final_cad,
-                    is_composed=(piatto.get('tipo') == 'composto'),
-                    ingredients=formatted_ingredients
-                ))
-            
-            if meal_name in app_plan[day_name]:
-                app_plan[day_name][meal_name].extend(items)
-            else:
-                app_plan[day_name][meal_name] = items
-
-    for day, meals in app_plan.items():
-        ordered_meals = {}
-        for standard_meal in MEAL_ORDER:
-            if standard_meal in meals:
-                ordered_meals[standard_meal] = meals[standard_meal]
-        for k, v in meals.items():
-            if k not in ordered_meals:
-                ordered_meals[k] = v
-        app_plan[day] = ordered_meals
-
-    return DietResponse(
-        plan=app_plan,
-        substitutions=app_substitutions
-    )
