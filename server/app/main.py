@@ -499,6 +499,8 @@ def _convert_to_app_format(gemini_output) -> DietResponse:
 
 @app.get("/admin/config/maintenance")
 async def get_maintenance_status(requester_id: str = Depends(verify_token)):
+    if remote_config is None:
+        return {"enabled": False, "error": "Library missing"}
     try:
         template = remote_config.get_template()
         # Check if parameter exists, otherwise default to False
@@ -522,6 +524,8 @@ async def set_maintenance_status(
     body: MaintenanceRequest,
     requester_id: str = Depends(verify_token)
 ):
+    if remote_config is None:
+        raise HTTPException(status_code=503, detail="Remote Config library missing. Clear Build Cache.")
     try:
         template = remote_config.get_template()
         
