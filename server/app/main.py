@@ -17,15 +17,29 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from pydantic import Json, BaseModel
 
+# --- IMPORTS RIPRISTINATI ---
 from app.services.diet_service import DietParser
 from app.services.receipt_service import ReceiptScanner
 from app.services.notification_service import NotificationService
+from app.services.normalization import normalize_meal_name
 from app.core.config import settings
-from app.models.schemas import DietResponse
+from app.models.schemas import DietResponse, Dish, Ingredient, SubstitutionGroup, SubstitutionOption
 
 # --- CONFIGURATION ---
 MAX_FILE_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".webp"}
+
+# [RIPRISTINATO] Ordine dei pasti
+MEAL_ORDER = [
+    "Colazione",
+    "Seconda Colazione",
+    "Spuntino",
+    "Pranzo",
+    "Merenda",
+    "Cena",
+    "Spuntino Serale",
+    "Nell'Arco Della Giornata"
+]
 
 structlog.configure(
     processors=[
@@ -134,24 +148,31 @@ async def upload_diet(
         raise HTTPException(status_code=400, detail="Only PDF allowed")
 
     temp_filename = f"{uuid.uuid4()}.pdf"
+    log = logger.bind(user_id=user_id, filename=file.filename)
     
     try:
         await save_upload_file(file, temp_filename)
+        log.info("file_upload_success")
         
         raw_data = await run_in_threadpool(diet_parser.parse_complex_diet, temp_filename)
-        # Assuming _convert_to_app_format is handled internally in your logic or omitted for brevity in previous context
-        # If needed, ensure the conversion logic is present. For now, returning raw_data matching schema.
-        # Ideally, link to your internal normalization logic if distinct from diet_parser.
         
+        # [RIPRISTINATO] Conversione nel formato app
+        # NOTA: Assicurati che la funzione _convert_to_app_format sia definita in fondo al file!
+        # Se non c'è nel file originale che hai, devi recuperarla.
+        if '_convert_to_app_format' in globals():
+             final_data = _convert_to_app_format(raw_data)
+        else:
+             final_data = raw_data # Fallback se la funzione manca
+
         if fcm_token:
             await run_in_threadpool(notification_service.send_diet_ready, fcm_token)
             
-        return raw_data # Or processed data
+        return final_data
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("diet_process_failed", error=str(e))
+        log.error("diet_process_failed", error=str(e))
         raise HTTPException(status_code=500, detail="Processing failed")
     finally:
         if os.path.exists(temp_filename):
@@ -195,11 +216,17 @@ async def upload_diet_admin(
             custom_prompt
         )
         
+        # [RIPRISTINATO] Conversione
+        if '_convert_to_app_format' in globals():
+             final_data = _convert_to_app_format(raw_data)
+        else:
+             final_data = raw_data
+
         if fcm_token:
             await run_in_threadpool(notification_service.send_diet_ready, fcm_token)
             
         log.info("admin_upload_success", used_custom_parser=bool(custom_prompt))
-        return raw_data
+        return final_data
 
     except HTTPException:
         raise
@@ -220,6 +247,7 @@ async def scan_receipt(
 ):
     ext = validate_extension(file.filename)
     temp_filename = f"{uuid.uuid4()}{ext}"
+    log = logger.bind(user_id=user_id, task="receipt_scan")
     
     try:
         await save_upload_file(file, temp_filename)
@@ -227,12 +255,13 @@ async def scan_receipt(
         current_scanner = ReceiptScanner(allowed_foods_list=allowed_foods)
         found_items = await run_in_threadpool(current_scanner.scan_receipt, temp_filename)
         
+        log.info("scan_success", items_found=len(found_items))
         return JSONResponse(content=found_items)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("scan_failed", error=str(e))
+        log.error("scan_failed", error=str(e))
         raise HTTPException(status_code=500, detail="Scanning failed")
     finally:
         if os.path.exists(temp_filename):
@@ -251,7 +280,7 @@ async def admin_create_user(
         
         final_parent_id = body.parent_id
         
-        # Logica genitore automatico se chi crea è un nutrizionista
+        # Logica genitore automatico
         if requester_doc.exists:
             requester_data = requester_doc.to_dict()
             requester_role = requester_data.get('role', 'user')
@@ -267,7 +296,7 @@ async def admin_create_user(
 
         auth.set_custom_user_claims(user.uid, {'role': body.role})
 
-        # [MODIFICA CRITICA] Aggiunto requires_password_change: True
+        # [NUOVO] Scrittura DB con flag requires_password_change: True
         db.collection('users').document(user.uid).set({
             'uid': user.uid,
             'email': body.email,
@@ -278,7 +307,7 @@ async def admin_create_user(
             'is_active': True,
             'created_at': firebase_admin.firestore.SERVER_TIMESTAMP,
             'created_by': requester_id,
-            'requires_password_change': True  # <--- BLOCCO PASSWORD ATTIVO
+            'requires_password_change': True  # <--- CRITICO
         })
         
         logger.info("user_created", uid=user.uid, role=body.role)
@@ -298,8 +327,6 @@ async def admin_delete_user(
             auth.delete_user(target_uid)
         except auth.UserNotFoundError:
             logger.warning("ghost_user_deletion", uid=target_uid)
-        except Exception as e:
-            raise e
 
         db = firebase_admin.firestore.client()
         db.collection('users').document(target_uid).delete()
@@ -332,7 +359,7 @@ async def admin_sync_users(requester_id: str = Depends(verify_token)):
                         'last_name': '',
                         'created_at': firebase_admin.firestore.SERVER_TIMESTAMP,
                         'synced_by_admin': True,
-                        'requires_password_change': False # Gli utenti vecchi/syncati non vengono bloccati
+                        'requires_password_change': False
                     })
                     count += 1
             page = page.get_next_page()
@@ -369,6 +396,7 @@ async def upload_parser_config(
         logger.error("parser_upload_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/admin/config/maintenance")
 async def get_maintenance_status(requester_id: str = Depends(verify_token)):
     try:
@@ -402,3 +430,106 @@ async def set_maintenance_status(
     except Exception as e:
         logger.error("maintenance_write_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+def _convert_to_app_format(gemini_output) -> DietResponse:
+    if not gemini_output:
+        return DietResponse(plan={}, substitutions={})
+
+    app_plan = {}
+    app_substitutions = {}
+
+    raw_subs = gemini_output.get('tabella_sostituzioni', [])
+    cad_lookup_map = {} 
+
+    for group in raw_subs:
+        cad_code = group.get('cad_code', 0)
+        titolo = group.get('titolo', "").strip()
+        
+        if cad_code > 0:
+            cad_key = str(cad_code)
+            cad_lookup_map[titolo.lower()] = cad_code
+            
+            options = []
+            for opt in group.get('opzioni', []):
+                options.append(SubstitutionOption(
+                    name=opt.get('nome', 'Unknown'),
+                    qty=opt.get('quantita', '')
+                ))
+            
+            if not options: 
+                options.append(SubstitutionOption(name=titolo, qty=""))
+
+            app_substitutions[cad_key] = SubstitutionGroup(
+                name=titolo,
+                options=options
+            )
+
+    raw_plan = gemini_output.get('piano_settimanale', [])
+    
+    DAY_MAPPING = {
+        "lun": "Lunedì", "mon": "Lunedì",
+        "mar": "Martedì", "tue": "Martedì",
+        "mer": "Mercoledì", "wed": "Mercoledì",
+        "gio": "Giovedì", "thu": "Giovedì",
+        "ven": "Venerdì", "fri": "Venerdì",
+        "sab": "Sabato", "sat": "Sabato",
+        "dom": "Domenica", "sun": "Domenica"
+    }
+
+    for giorno in raw_plan:
+        raw_day_name = giorno.get('giorno', 'Sconosciuto').strip().lower()
+        day_name = "Sconosciuto"
+        
+        if len(raw_day_name) >= 3:
+            prefix = raw_day_name[:3]
+            day_name = DAY_MAPPING.get(prefix, raw_day_name.capitalize())
+        else:
+            day_name = raw_day_name.capitalize()
+
+        if day_name not in app_plan:
+            app_plan[day_name] = {}
+
+        for pasto in giorno.get('pasti', []):
+            meal_name = normalize_meal_name(pasto.get('tipo_pasto', ''))
+            
+            items = []
+            for piatto in pasto.get('elenco_piatti', []):
+                dish_name = str(piatto.get('nome_piatto') or 'Piatto')
+                final_cad = piatto.get('cad_code', 0)
+                if final_cad == 0:
+                    final_cad = cad_lookup_map.get(dish_name.lower(), 0)
+
+                formatted_ingredients = []
+                for ing in piatto.get('ingredienti', []):
+                    formatted_ingredients.append(Ingredient(
+                        name=str(ing.get('nome') or ''),
+                        qty=str(ing.get('quantita') or '')
+                    ))
+
+                items.append(Dish(
+                    name=dish_name,
+                    qty=str(piatto.get('quantita_totale') or ''),
+                    cad_code=final_cad,
+                    is_composed=(piatto.get('tipo') == 'composto'),
+                    ingredients=formatted_ingredients
+                ))
+            
+            if meal_name in app_plan[day_name]:
+                app_plan[day_name][meal_name].extend(items)
+            else:
+                app_plan[day_name][meal_name] = items
+
+    for day, meals in app_plan.items():
+        ordered_meals = {}
+        for standard_meal in MEAL_ORDER:
+            if standard_meal in meals:
+                ordered_meals[standard_meal] = meals[standard_meal]
+        for k, v in meals.items():
+            if k not in ordered_meals:
+                ordered_meals[k] = v
+        app_plan[day] = ordered_meals
+
+    return DietResponse(
+        plan=app_plan,
+        substitutions=app_substitutions
+    )
