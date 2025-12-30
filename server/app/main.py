@@ -221,17 +221,29 @@ async def upload_diet_admin(request: Request, target_uid: str, file: UploadFile 
                 if parent_doc.exists: custom_prompt = parent_doc.to_dict().get('custom_parser_prompt')
         
         raw_data = await run_in_threadpool(diet_parser.parse_complex_diet, temp_filename, custom_prompt)
-        
-        # Save to history
+        formatted_data = _convert_to_app_format(raw_data)
+        dict_data = formatted_data.dict()
+
+        # 1. Save to Admin History (Global)
         db.collection('diet_history').add({
             'userId': target_uid,
             'uploadedAt': firebase_admin.firestore.SERVER_TIMESTAMP,
             'fileName': file.filename,
-            'parsedData': _convert_to_app_format(raw_data).dict()
+            'parsedData': dict_data,
+            'uploadedBy': requester_id
+        })
+
+        # 2. Save to Client History (User Subcollection)
+        # This ensures the client app sees it in "History" and can restore it
+        db.collection('users').document(target_uid).collection('diets').add({
+            'uploadedAt': firebase_admin.firestore.SERVER_TIMESTAMP,
+            'plan': dict_data.get('plan'),
+            'substitutions': dict_data.get('substitutions'),
+            'uploadedBy': 'nutritionist'
         })
         
         if fcm_token: await run_in_threadpool(notification_service.send_diet_ready, fcm_token)
-        return _convert_to_app_format(raw_data)
+        return formatted_data
     finally:
         if os.path.exists(temp_filename): os.remove(temp_filename)
 
