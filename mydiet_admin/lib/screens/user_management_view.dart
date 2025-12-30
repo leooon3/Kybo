@@ -249,6 +249,70 @@ class _UserManagementViewState extends State<UserManagementView> {
     );
   }
 
+  Future<void> _assignUser(
+    String targetUid,
+    Map<String, String> nutritionists,
+  ) async {
+    String? selectedNutId;
+    if (nutritionists.isNotEmpty) selectedNutId = nutritionists.keys.first;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text("Assegna a Nutrizionista"),
+          content: DropdownButtonFormField<String>(
+            value: selectedNutId,
+            isExpanded: true,
+            items: nutritionists.entries
+                .map(
+                  (e) => DropdownMenuItem(value: e.key, child: Text(e.value)),
+                )
+                .toList(),
+            onChanged: (v) => setDialogState(() => selectedNutId = v),
+            decoration: const InputDecoration(
+              labelText: "Seleziona Nutrizionista",
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Annulla"),
+            ),
+            FilledButton(
+              onPressed: () async {
+                if (selectedNutId == null) return;
+                Navigator.pop(ctx);
+                setState(() => _isLoading = true);
+                try {
+                  await _repo.assignUserToNutritionist(
+                    targetUid,
+                    selectedNutId!,
+                  );
+                  if (mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Utente assegnato!")),
+                    );
+                } catch (e) {
+                  if (mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text("Errore: $e"),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                } finally {
+                  if (mounted) setState(() => _isLoading = false);
+                }
+              },
+              child: const Text("Assegna"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _showCreateUserDialog() async {
     final emailCtrl = TextEditingController();
     final passCtrl = TextEditingController();
@@ -548,6 +612,7 @@ class _UserManagementViewState extends State<UserManagementView> {
             (docs[index].data() as Map)['first_name'] ?? 'User',
           ),
           onEdit: _editUser,
+          onAssign: null, // Nutritionists can't re-assign users in this view
           currentUserRole: _currentUserRole,
           currentUserId: _currentUserId,
           roleColor: _getRoleColor(
@@ -628,6 +693,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                       onUploadParser: _uploadParser,
                       onHistory: (_) {}, // Nut history irrelevant here
                       onEdit: _editUser,
+                      onAssign: null,
                       currentUserRole: _currentUserRole,
                       currentUserId: _currentUserId,
                       roleColor: _getRoleColor('nutritionist'),
@@ -656,6 +722,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                         (clients[idx].data() as Map)['first_name'] ?? 'Client',
                       ),
                       onEdit: _editUser,
+                      onAssign: null,
                       currentUserRole: _currentUserRole,
                       currentUserId: _currentUserId,
                       roleColor: _getRoleColor('user'),
@@ -706,6 +773,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                 (independents[idx].data() as Map)['first_name'] ?? 'User',
               ),
               onEdit: _editUser,
+              onAssign: (uid) => _assignUser(uid, nutNameMap),
               currentUserRole: _currentUserRole,
               currentUserId: _currentUserId,
               roleColor: _getRoleColor('independent'),
@@ -737,6 +805,7 @@ class _UserManagementViewState extends State<UserManagementView> {
               onUploadParser: _uploadParser,
               onHistory: (_) {},
               onEdit: _editUser,
+              onAssign: null,
               currentUserRole: _currentUserRole,
               currentUserId: _currentUserId,
               roleColor: _getRoleColor('admin'),
@@ -755,6 +824,7 @@ class _UserCard extends StatelessWidget {
   final Function(String) onUploadParser;
   final Function(String) onHistory;
   final Function(String, String, String, String) onEdit;
+  final Function(String)? onAssign;
   final String currentUserRole;
   final String currentUserId;
   final Color roleColor;
@@ -766,6 +836,7 @@ class _UserCard extends StatelessWidget {
     required this.onUploadParser,
     required this.onHistory,
     required this.onEdit,
+    this.onAssign,
     required this.currentUserRole,
     required this.currentUserId,
     required this.roleColor,
@@ -793,6 +864,7 @@ class _UserCard extends StatelessWidget {
     bool canEdit =
         requiresPassChange &&
         (currentUserRole == 'admin' || createdBy == currentUserId);
+    bool canAssign = role == 'independent' && onAssign != null;
 
     return Card(
       child: Padding(
@@ -876,6 +948,12 @@ class _UserCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                if (canAssign)
+                  IconButton(
+                    icon: const Icon(Icons.person_add, color: Colors.blue),
+                    tooltip: "Assegna a Nutrizionista",
+                    onPressed: () => onAssign!(data['uid']),
+                  ),
                 if (showDiet) ...[
                   IconButton(
                     icon: const Icon(Icons.history, color: Colors.teal),

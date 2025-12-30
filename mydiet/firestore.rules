@@ -11,38 +11,52 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
     
-    // Checks the custom claim set by the backend
+    // Fetch the current user's document from the database
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Check if user is Admin/Nutritionist via Token OR Database (Fallback)
     function isAdmin() {
-      return isSignedIn() && request.auth.token.role in ['admin', 'nutritionist'];
+      return isSignedIn() && (
+        (request.auth.token.keys().hasAny(['role']) && request.auth.token.role in ['admin', 'nutritionist']) ||
+        getUserData().role in ['admin', 'nutritionist']
+      );
     }
 
     // --- RULES ---
 
-    // Config: Public Read (for maintenance screen), No Write (Backend only)
+    // 1. Config: Public Read
     match /config/global {
       allow read: if true;
       allow write: if false;
     }
 
-    // [NEW] Diet History: Admin Full Access
+    // 2. Diet History (Global): Admins only
     match /diet_history/{document=**} {
       allow read, write: if isAdmin();
     }
 
-    // User Data
+    // 3. User Data
     match /users/{userId} {
-      // Profile: Owner and Admin can Read. Only Backend can Write (create/delete).
+      // Profile: Owner and Admin can Read.
       allow read: if isOwner(userId) || isAdmin();
-      allow write: if false;
+      allow write: if false; // Only Backend can create/delete users
 
-      // Diets Subcollection: Owner has full control. Admin can read.
+      // Diets: Owner can do everything. Admin can read.
       match /diets/{dietId} {
         allow read, write: if isOwner(userId);
         allow read: if isAdmin();
       }
+      
+      // Parser History: Admin only (Nutritionist config)
+      match /parser_history/{docId} {
+        allow read: if isAdmin();
+        allow write: if false; // Backend writes this
+      }
     }
 
-    // Deny all other access by default
+    // Deny all other access
     match /{document=**} {
       allow read, write: if false;
     }

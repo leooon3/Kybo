@@ -90,6 +90,10 @@ class UpdateUserRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
 
+class AssignUserRequest(BaseModel):
+    target_uid: str
+    nutritionist_id: str
+
 class MaintenanceRequest(BaseModel):
     enabled: bool
     message: Optional[str] = None
@@ -234,7 +238,6 @@ async def upload_diet_admin(request: Request, target_uid: str, file: UploadFile 
         })
 
         # 2. Save to Client History (User Subcollection)
-        # This ensures the client app sees it in "History" and can restore it
         db.collection('users').document(target_uid).collection('diets').add({
             'uploadedAt': firebase_admin.firestore.SERVER_TIMESTAMP,
             'plan': dict_data.get('plan'),
@@ -311,6 +314,26 @@ async def admin_update_user(target_uid: str, body: UpdateUserRequest, requester_
             db.collection('users').document(target_uid).update(fs_update)
             
         return {"message": "User updated"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/assign-user")
+async def admin_assign_user(body: AssignUserRequest, requester_id: str = Depends(verify_admin)):
+    try:
+        db = firebase_admin.firestore.client()
+        
+        # 1. Update Firestore (Change role to user, assign parent)
+        db.collection('users').document(body.target_uid).update({
+            'role': 'user',
+            'parent_id': body.nutritionist_id,
+            'created_by': body.nutritionist_id, 
+            'updated_at': firebase_admin.firestore.SERVER_TIMESTAMP
+        })
+        
+        # 2. Update Auth Claims
+        auth.set_custom_user_claims(body.target_uid, {'role': 'user'})
+        
+        return {"message": "User assigned successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -131,6 +131,27 @@ class AdminRepository {
     }
   }
 
+  Future<void> assignUserToNutritionist(
+    String targetUid,
+    String nutritionistId,
+  ) async {
+    final token = await _getToken();
+    final response = await http.post(
+      Uri.parse('$_baseUrl/admin/assign-user'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'target_uid': targetUid,
+        'nutritionist_id': nutritionistId,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to assign user: ${response.body}');
+    }
+  }
+
   Future<void> deleteUser(String uid) async {
     final token = await _getToken();
     final response = await http.delete(
