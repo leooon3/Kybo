@@ -7,8 +7,16 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     
-    # [FIX] Allow ALL origins (*) to fix "Failed to fetch" / CORS errors in Flutter Web
-    ALLOWED_ORIGINS: list[str] = ["*"]
+    # [SECURITY FIX] Strict CORS Policy
+    # Add your Flutter Web production domain here
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://localhost:4000",
+        "http://localhost:5000",
+        "https://mydiet-74rg.onrender.com",
+        "https://my-diet-admin.vercel.app"
+    ]
 
     # Paths
     DIET_PDF_PATH: str = "temp_dieta.pdf"
