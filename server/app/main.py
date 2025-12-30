@@ -94,6 +94,10 @@ class CreateUserRequest(BaseModel):
 class MaintenanceRequest(BaseModel):
     enabled: bool
 
+class ScheduleMaintenanceRequest(BaseModel):
+    scheduled_time: str
+    message: str
+    notify: bool
 # --- UTILS ---
 async def save_upload_file(file: UploadFile, filename: str) -> None:
     size = 0
@@ -533,3 +537,45 @@ def _convert_to_app_format(gemini_output) -> DietResponse:
         plan=app_plan,
         substitutions=app_substitutions
     )
+# --- CONFIG & MAINTENANCE ROUTES ---
+
+@app.get("/admin/config/maintenance")
+async def get_maintenance_status(admin_uid: str = Depends(verify_admin)):
+    doc = db.collection('system_config').document('maintenance').get()
+    if doc.exists:
+        return doc.to_dict()
+    return {"enabled": False}
+
+@app.post("/admin/config/maintenance")
+async def set_maintenance_status(req: MaintenanceRequest, admin_uid: str = Depends(verify_admin)):
+    db.collection('system_config').document('maintenance').set({
+        "enabled": req.enabled,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+        "updated_by": admin_uid
+    }, merge=True)
+    return {"status": "updated", "enabled": req.enabled}
+
+@app.post("/admin/schedule-maintenance")
+async def schedule_maintenance(req: ScheduleMaintenanceRequest, admin_uid: str = Depends(verify_admin)):
+    # 1. Save schedule to Firestore (so app can check it if needed)
+    db.collection('system_config').document('maintenance').set({
+        "scheduled_start": req.scheduled_time,
+        "maintenance_message": req.message,
+        "is_scheduled": True
+    }, merge=True)
+
+    # 2. Broadcast Notification
+    if req.notify:
+        try:
+            # Send to 'all_users' topic
+            response_count = broadcast_message(
+                title="System Update",
+                body=req.message,
+                data={"type": "maintenance_alert", "time": req.scheduled_time}
+            )
+            return {"status": "scheduled", "notifications_sent": response_count}
+        except Exception as e:
+            print(f"Broadcast error: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to send notifications: {str(e)}")
+            
+    return {"status": "scheduled", "notifications_sent": 0}
