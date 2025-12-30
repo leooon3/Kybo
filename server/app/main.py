@@ -96,6 +96,7 @@ class CreateUserRequest(BaseModel):
 
 class MaintenanceRequest(BaseModel):
     enabled: bool
+    message: Optional[str] = None
 
 class ScheduleMaintenanceRequest(BaseModel):
     scheduled_time: str
@@ -483,6 +484,7 @@ async def get_maintenance_status(requester_id: str = Depends(verify_admin)):
         logger.error("maintenance_read_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+# [UPDATE THIS ENDPOINT]
 @app.post("/admin/config/maintenance")
 async def set_maintenance_status(
     body: MaintenanceRequest,
@@ -490,19 +492,24 @@ async def set_maintenance_status(
 ):
     try:
         db = firebase_admin.firestore.client()
-        config_ref = db.collection('config').document('global')
-        config_ref.set({
+        
+        # Prepare data
+        data = {
             'maintenance_mode': body.enabled,
             'updated_at': firestore.SERVER_TIMESTAMP,
             'updated_by': requester_id
-        }, merge=True)
+        }
+        
+        # If a message is provided (e.g., Emergency text), save it.
+        if body.message:
+            data['maintenance_message'] = body.message
+            
+        db.collection('config').document('global').set(data, merge=True)
         return {"message": f"Maintenance Mode is now {body.enabled}"}
 
     except Exception as e:
         logger.error("maintenance_write_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/admin/schedule-maintenance")
+        raise HTTPException(status_code=500, detail=str(e))@app.post("/admin/schedule-maintenance")
 async def schedule_maintenance(
     req: ScheduleMaintenanceRequest, 
     admin_uid: str = Depends(verify_admin)
