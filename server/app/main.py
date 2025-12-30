@@ -166,7 +166,7 @@ async def verify_admin(uid: str = Depends(verify_token)):
 async def maintenance_worker():
     """
     Checks every 60 seconds if a scheduled maintenance is due.
-    Robust Timezone Handling: Compares UTC to UTC to prevent bypass.
+    Robust Timezone Handling: Handles both Naive and Aware datetimes.
     """
     logger.info("maintenance_worker_started")
     while True:
@@ -182,14 +182,19 @@ async def maintenance_worker():
                 
                 if is_scheduled and start_str:
                     try:
-                        # 1. Parse the Scheduled Time (Handle 'Z' for UTC if present)
+                        # 1. Parse the Scheduled Time
+                        # .replace('Z', '+00:00') helps format ISO strings correctly
                         clean_str = start_str.replace('Z', '+00:00')
                         scheduled_time = datetime.fromisoformat(clean_str)
+                        
+                        # [FIX]: If database has a "naive" date (no timezone), force it to be UTC
+                        if scheduled_time.tzinfo is None:
+                            scheduled_time = scheduled_time.replace(tzinfo=timezone.utc)
                         
                         # 2. Get Current Time (UTC Aware)
                         now = datetime.now(timezone.utc)
 
-                        # 3. Compare
+                        # 3. Compare (Now both are Aware, so no crash)
                         if now >= scheduled_time:
                             logger.info("maintenance_triggered_automatically", scheduled_for=start_str)
                             
@@ -202,8 +207,8 @@ async def maintenance_worker():
                             })
                     except ValueError as ve:
                         logger.error("date_parsing_error", error=str(ve), date_str=start_str)
-                    except TypeError as te:
-                        logger.error("timezone_comparison_error", error=str(te))
+                    except Exception as e:
+                        logger.error("maintenance_logic_error", error=str(e))
                         
         except Exception as e:
             logger.error("maintenance_worker_error", error=str(e))
