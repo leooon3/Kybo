@@ -1,8 +1,8 @@
-name: mydiet
+name: Kybo
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.10.1
@@ -50,6 +50,7 @@ flutter:
     - assets/dieta.json
     - assets/spesa_importata.json
     - ./.env
+    - ./.env.prod
 
 flutter_launcher_icons:
   android: "launcher_icon"

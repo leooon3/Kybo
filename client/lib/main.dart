@@ -1,22 +1,32 @@
 import 'dart:async'; // [IMPORT NEEDED FOR TIMER]
+import 'package:Kybo/core/env.dart';
+import 'package:Kybo/firebase_options_dev.dart' as dev;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'firebase_options.dart';
+import 'firebase_options_dev.dart';
 
 import 'constants.dart';
+import 'firebase_options_dev.dart' as prod;
 import 'repositories/diet_repository.dart';
 import 'providers/diet_provider.dart';
 import 'screens/splash_screen.dart';
 import 'guards/password_guard.dart';
 import 'services/notification_service.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await NotificationService().init();
+  await Env.init();
+
+  final firebaseOptions = Env.isProd
+      ? prod.DefaultFirebaseOptions.currentPlatform
+      : dev.DefaultFirebaseOptions.currentPlatform;
+
+  await Firebase.initializeApp(options: firebaseOptions);
 
   runApp(
     MultiProvider(

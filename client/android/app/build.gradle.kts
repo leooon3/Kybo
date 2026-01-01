@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.mydiet"
+    namespace = "it.kybo.app"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -22,7 +22,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "mydiet.rick"
+        applicationId = "it.kybo.app"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

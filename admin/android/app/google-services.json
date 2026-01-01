@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "857607129010",
+    "project_id": "kybo-production",
+    "storage_bucket": "kybo-production.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:857607129010:android:64a5e80b1b5f46da5206ab",
+        "android_client_info": {
+          "package_name": "com.example.mydiet_admin"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "857607129010-se5ua3l5844hh7gekabp0nqa9ogt9s72.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB6leiNmp_vdbttBTYXPEIYsgFOJya2Vbk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "857607129010-se5ua3l5844hh7gekabp0nqa9ogt9s72.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "857607129010-lkt3msip63tbme376lpfocblhhssl5f3.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.dietApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

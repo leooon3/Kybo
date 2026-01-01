@@ -44,5 +44,8 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-lib/firebase_options.dart
+lib/firebase_options_prod.dart
+lib/firebase_options_dev.dart
 serviceAccountKey.json
+.env.prod
+.env

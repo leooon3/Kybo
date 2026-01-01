@@ -1,14 +1,29 @@
+import 'package:Kybo_Admin/guards/admin_password_guard.dart';
+import 'package:Kybo_Admin/screens/dashboard_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'firebase_options.dart';
-import 'guards/admin_password_guard.dart';
-import 'screens/dashboard_screen.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart'; // Assicurati di averlo
+import 'core/env.dart';
 
-void main() async {
+// Importa i due file generati (usa i nomi che abbiamo creato prima)
+import 'firebase_options_dev.dart' as dev;
+import 'firebase_options_prod.dart' as prod;
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // 1. Carica le variabili (.env o .env.prod)
+  await Env.init();
+
+  // 2. Scegli Firebase in base alla modalità
+  final firebaseOptions = Env.isProd
+      ? prod.DefaultFirebaseOptions.currentPlatform
+      : dev.DefaultFirebaseOptions.currentPlatform;
+
+  // 3. Inizializza
+  await Firebase.initializeApp(options: firebaseOptions);
   runApp(const AdminApp());
 }
 
