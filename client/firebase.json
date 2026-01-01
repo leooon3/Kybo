@@ -1,1 +1,19 @@
-{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"hosting":{"public":"public","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]},"storage":{"rules":"storage.rules"},"flutter":{"platforms":{"android":{"default":{"projectId":"kybo-production","appId":"1:857607129010:android:34437ab896f642cd5206ab","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"kybo-production","configurations":{"android":"1:857607129010:android:34437ab896f642cd5206ab","ios":"1:857607129010:ios:e47d298ba7891ba35206ab"}}}}}}
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}
