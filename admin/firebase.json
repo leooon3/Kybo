@@ -2,7 +2,12 @@
   "hosting": {
     "target": "admin",
     "public": "build/web",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "!build/web/assets/.env.prod"
+    ],
     "rewrites": [
       {
         "source": "**",
