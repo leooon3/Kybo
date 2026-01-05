@@ -1,9 +1,5 @@
 import 'package:flutter/material.dart';
 
-// --- CONFIGURAZIONE SERVER ---
-// IMPORTANTE: Sostituisci con il TUO indirizzo IP locale aggiornato
-const String serverUrl = 'https://Kybo-74rg.onrender.com';
-
 // --- THEME COLORS ---
 class AppColors {
   static const primary = Color(0xFF2E7D32); // Primary Green
