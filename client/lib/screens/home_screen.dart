@@ -93,8 +93,9 @@ class _MainScreenContentState extends State<MainScreenContent>
 
     final storage = StorageService();
     try {
+      // FIX: Rimosso check ridondante 'data is List'
       var data = await storage.loadAlarms();
-      if (data is List && data.isNotEmpty) {
+      if (data.isNotEmpty) {
         final notifs = NotificationService();
         await notifs.init();
         await notifs.scheduleAllMeals();
@@ -499,8 +500,6 @@ class _MainScreenContentState extends State<MainScreenContent>
     );
   }
 
-  // --- ALTRE FUNZIONI (Upload, Scan, Allarmi) INVARIATE ---
-  // (Le riporto per completezza del file)
   Future<void> _uploadDiet(BuildContext context) async {
     final provider = Provider.of<DietProvider>(context, listen: false);
     try {
@@ -561,8 +560,11 @@ class _MainScreenContentState extends State<MainScreenContent>
     final storage = StorageService();
     List<Map<String, dynamic>> alarms = [];
     try {
+      // FIX: Rimosso check ridondante 'data is List'
       var data = await storage.loadAlarms();
-      if (data is List) alarms = List<Map<String, dynamic>>.from(data);
+      if (data.isNotEmpty) {
+        alarms = List<Map<String, dynamic>>.from(data);
+      }
     } catch (_) {}
 
     if (!mounted) return;

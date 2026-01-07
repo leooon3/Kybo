@@ -91,7 +91,10 @@ Map<String, bool> _calculateAvailabilityIsolate(Map<String, dynamic> payload) {
           continue;
         }
 
-        String swapKey = "${day}_${mType}_group_$gIdx";
+        final firstDish = dishes[indices[0]];
+        final int cadCode = firstDish['cad_code'] ?? 0;
+        String swapKey = "${day}_${mType}_$cadCode";
+
         bool isSwapped = activeSwapsRaw.containsKey(swapKey);
 
         if (isSwapped) {
@@ -335,6 +338,7 @@ class DietProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- MODIFICATO PER GESTIRE I NULL ---
   Future<void> consumeMeal(
     String day,
     String mealType,
@@ -356,33 +360,94 @@ class DietProvider extends ChangeNotifier {
     }
     if (targetGroupIndices.isEmpty) return;
 
+    // FASE 1: Validazione (Controlla se c'è abbastanza cibo)
     if (!force) {
       for (int i in targetGroupIndices) {
         final dish = meals[i];
-        List<dynamic> itemsToCheck = [];
-        if ((dish['qty']?.toString() ?? "") == "N/A") {
-          if (dish['ingredients'] != null) itemsToCheck = dish['ingredients'];
-        } else if (dish['ingredients'] != null &&
-            (dish['ingredients'] as List).isNotEmpty) {
-          itemsToCheck = dish['ingredients'];
+        final int cadCode = dish['cad_code'] ?? 0;
+        final String swapKey = "${day}_${mealType}_$cadCode";
+
+        // VERIFICA SWAP
+        if (_activeSwaps.containsKey(swapKey)) {
+          final activeSwap = _activeSwaps[swapKey]!;
+          // FIX: Gestione nullable list
+          final List<dynamic> swapIngs = activeSwap.swappedIngredients ?? [];
+
+          if (swapIngs.isNotEmpty) {
+            for (var ing in swapIngs) {
+              _validateItem(ing['name'].toString(), ing['qty'].toString());
+            }
+          } else {
+            // Sostituzione semplice
+            _validateItem(
+              activeSwap.name,
+              "${activeSwap.qty} ${activeSwap.unit}",
+            );
+          }
         } else {
-          itemsToCheck = [
-            {'name': dish['name'], 'qty': dish['qty'] ?? '1'},
-          ];
-        }
-        for (var itemData in itemsToCheck) {
-          _validateItem(
-            itemData['name'].toString(),
-            itemData['qty'].toString(),
-          );
+          // COMPORTAMENTO ORIGINALE
+          List<dynamic> itemsToCheck = [];
+          if ((dish['qty']?.toString() ?? "") == "N/A") {
+            if (dish['ingredients'] != null) itemsToCheck = dish['ingredients'];
+          } else if (dish['ingredients'] != null &&
+              (dish['ingredients'] as List).isNotEmpty) {
+            itemsToCheck = dish['ingredients'];
+          } else {
+            itemsToCheck = [
+              {'name': dish['name'], 'qty': dish['qty'] ?? '1'},
+            ];
+          }
+          for (var itemData in itemsToCheck) {
+            _validateItem(
+              itemData['name'].toString(),
+              itemData['qty'].toString(),
+            );
+          }
         }
       }
     }
 
+    // FASE 2: Esecuzione (Rimuovi cibo dalla dispensa)
     for (int i in targetGroupIndices) {
       final dish = meals[i];
-      if ((dish['qty']?.toString() ?? "") == "N/A") {
-        if (dish['ingredients'] != null) {
+      final int cadCode = dish['cad_code'] ?? 0;
+      final String swapKey = "${day}_${mealType}_$cadCode";
+
+      if (_activeSwaps.containsKey(swapKey)) {
+        // CONSUMA ALIMENTO SOSTITUITO
+        final activeSwap = _activeSwaps[swapKey]!;
+        // FIX: Gestione nullable list
+        final List<dynamic> swapIngs = activeSwap.swappedIngredients ?? [];
+
+        if (swapIngs.isNotEmpty) {
+          for (var ing in swapIngs) {
+            _consumeExecute(
+              ing['name'].toString(),
+              ing['qty'].toString(),
+              force: force,
+            );
+          }
+        } else {
+          _consumeExecute(
+            activeSwap.name,
+            "${activeSwap.qty} ${activeSwap.unit}",
+            force: force,
+          );
+        }
+      } else {
+        // CONSUMA ALIMENTO ORIGINALE
+        if ((dish['qty']?.toString() ?? "") == "N/A") {
+          if (dish['ingredients'] != null) {
+            for (var ing in dish['ingredients']) {
+              _consumeExecute(
+                ing['name'].toString(),
+                ing['qty'].toString(),
+                force: force,
+              );
+            }
+          }
+        } else if (dish['ingredients'] != null &&
+            (dish['ingredients'] as List).isNotEmpty) {
           for (var ing in dish['ingredients']) {
             _consumeExecute(
               ing['name'].toString(),
@@ -390,21 +455,13 @@ class DietProvider extends ChangeNotifier {
               force: force,
             );
           }
+        } else {
+          _consumeExecute(dish['name'], dish['qty'] ?? '1', force: force);
         }
-      } else if (dish['ingredients'] != null &&
-          (dish['ingredients'] as List).isNotEmpty) {
-        for (var ing in dish['ingredients']) {
-          _consumeExecute(
-            ing['name'].toString(),
-            ing['qty'].toString(),
-            force: force,
-          );
-        }
-      } else {
-        _consumeExecute(dish['name'], dish['qty'] ?? '1', force: force);
       }
     }
 
+    // FASE 3: Aggiorna UI (Barra l'originale in ogni caso)
     var currentMealsList = List<dynamic>.from(_dietData![day][mealType]);
     for (int i in targetGroupIndices) {
       if (i < currentMealsList.length) {

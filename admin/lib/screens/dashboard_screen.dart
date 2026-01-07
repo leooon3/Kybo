@@ -46,7 +46,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _onItemSelected(int index) {
     setState(() => _selectedIndex = index);
-    // Se siamo su mobile (Drawer aperto), chiudiamolo dopo la selezione
     if (Scaffold.maybeOf(context)?.hasDrawer ?? false) {
       Navigator.pop(context);
     }
@@ -54,7 +53,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Viste disponibili
     final List<Widget> views = [
       const UserManagementView(),
       if (_isAdmin) const ConfigView(),
@@ -67,14 +65,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_selectedIndex == 1) pageTitle = "Configurazione";
     if (_selectedIndex == 2) pageTitle = "Audit Logs";
 
-    // --- LAYOUT RESPONSIVE ---
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Consideriamo "Mobile" se la larghezza è < 800 pixel
         final bool isMobile = constraints.maxWidth < 800;
 
         if (isMobile) {
-          // --- VERSIONE MOBILE (Con AppBar e Drawer) ---
           return Scaffold(
             appBar: AppBar(
               title: Text(
@@ -90,13 +85,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             drawer: Drawer(
               backgroundColor: const Color(0xFF1F2937),
-              child:
-                  _buildSidebarContent(), // Riusiamo lo stesso widget sidebar
+              child: _buildSidebarContent(),
             ),
             body: views[_selectedIndex],
           );
         } else {
-          // --- VERSIONE DESKTOP (Sidebar Fissa) ---
           return Scaffold(
             body: Row(
               children: [
@@ -110,7 +103,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Expanded(
                   child: Column(
                     children: [
-                      // Header Desktop
                       Container(
                         height: 80,
                         padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -142,11 +134,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // Estraiamo il contenuto della sidebar per usarlo sia nel Drawer che nella colonna fissa
   Widget _buildSidebarContent() {
     return Column(
       children: [
-        // Logo Area
         Container(
           height: 80,
           alignment: Alignment.center,
@@ -172,7 +162,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(height: 20),
 
-        // Menu Items
         _SidebarItem(
           icon: Icons.people_alt_outlined,
           label: "Gestione Utenti",
@@ -197,7 +186,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         const Spacer(),
 
-        // Profilo Utente
         Container(
           padding: const EdgeInsets.all(16),
           color: const Color(0xFF111827),
@@ -260,8 +248,8 @@ class _SidebarItem extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
 
+  // FIX: Rimossa super.key inutilizzata
   const _SidebarItem({
-    super.key,
     required this.icon,
     required this.label,
     required this.isSelected,

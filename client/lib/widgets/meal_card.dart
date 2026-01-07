@@ -160,25 +160,45 @@ class MealCard extends StatelessWidget {
                     ),
                     const Divider(height: 1, thickness: 0.5),
 
-                    // Lista Piatti (Usiamo Column per evitare crash IntrinsicHeight)
+                    // Lista Piatti
                     Column(
                       children: List.generate(foods.length, (index) {
-                        final food = foods[index];
-                        final String name = food['name'].toString();
-                        final String nameLower = name.toLowerCase();
-                        final bool isConsumed = food['consumed'] == true;
-                        final int cadCode = food['cad_code'] ?? 0;
+                        final originalFood = foods[index];
+                        final int cadCode = originalFood['cad_code'] ?? 0;
                         final String swapKey = "${day}_${mealName}_$cadCode";
+
+                        // --- LOGICA SWAP (NUOVA) ---
+                        final bool isSwapped = activeSwaps.containsKey(swapKey);
+                        final activeSwap = isSwapped
+                            ? activeSwaps[swapKey]
+                            : null;
+
+                        // Se c'è uno swap, usiamo i suoi dati, altrimenti quelli originali
+                        final String displayName = isSwapped
+                            ? activeSwap!.name
+                            : originalFood['name'].toString();
+
+                        final String displayQtyRaw = isSwapped
+                            ? "${activeSwap!.qty} ${activeSwap.unit}"
+                            : "${originalFood['qty'] ?? ''} ${originalFood['unit'] ?? ''}";
+
+                        final bool isConsumed =
+                            originalFood['consumed'] == true;
 
                         String availKey = "${day}_${mealName}_$index";
                         bool isAvailable = availabilityMap[availKey] ?? true;
 
-                        // Controllo Ingredienti Composti
-                        final List<dynamic>? ingredients = food['ingredients'];
+                        // Ingredienti: Se scambiato, non mostriamo quelli vecchi
+                        // (o potremmo mostrare quelli nuovi se 'swappedIngredients' fosse popolato)
+                        final List<dynamic>? ingredients = isSwapped
+                            ? null // Nascondi ingredienti originali se scambiato
+                            : originalFood['ingredients'];
+
                         final bool hasIngredients =
                             ingredients != null && ingredients.isNotEmpty;
 
-                        // Logica Relax per il piatto principale
+                        // Logica Relax
+                        final String nameLower = displayName.toLowerCase();
                         bool isRelaxableItem = _relaxableFoods.any(
                           (tag) => nameLower.contains(tag),
                         );
@@ -187,13 +207,15 @@ class MealCard extends StatelessWidget {
                         if (isTranquilMode && isRelaxableItem) {
                           qtyDisplay = "A piacere";
                         } else {
-                          qtyDisplay =
-                              "${food['qty'] ?? ''} ${food['unit'] ?? ''}"
-                                  .trim();
+                          qtyDisplay = displayQtyRaw.trim();
                         }
 
                         return Container(
                           decoration: BoxDecoration(
+                            // Evidenzia leggermente lo sfondo se è uno swap
+                            color: isSwapped
+                                ? Colors.orange.withValues(alpha: 0.05)
+                                : null,
                             border: index != foods.length - 1
                                 ? Border(
                                     bottom: BorderSide(
@@ -208,10 +230,9 @@ class MealCard extends StatelessWidget {
                               vertical: 12,
                             ),
                             child: Row(
-                              crossAxisAlignment: CrossAxisAlignment
-                                  .start, // Allinea in alto per liste lunghe
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // Icona Stato (Centrata verticalmente rispetto alla prima riga)
+                                // Icona Stato
                                 Padding(
                                   padding: const EdgeInsets.only(top: 2),
                                   child: Icon(
@@ -230,34 +251,55 @@ class MealCard extends StatelessWidget {
                                 ),
                                 const SizedBox(width: 12),
 
-                                // Testi (Nome Piatto + Lista Ingredienti)
+                                // Testi
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        name,
-                                        style: TextStyle(
-                                          decoration: isConsumed
-                                              ? TextDecoration.lineThrough
-                                              : null,
-                                          color: isConsumed
-                                              ? Colors.grey
-                                              : const Color(0xFF2D3436),
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 15,
-                                        ),
+                                      Row(
+                                        children: [
+                                          // Se scambiato, mostra iconcina piccola
+                                          if (isSwapped)
+                                            const Padding(
+                                              padding: EdgeInsets.only(
+                                                right: 6,
+                                              ),
+                                              child: Icon(
+                                                Icons.swap_horiz,
+                                                size: 16,
+                                                color: Colors.orange,
+                                              ),
+                                            ),
+                                          Expanded(
+                                            child: Text(
+                                              displayName,
+                                              style: TextStyle(
+                                                decoration: isConsumed
+                                                    ? TextDecoration.lineThrough
+                                                    : null,
+                                                color: isConsumed
+                                                    ? Colors.grey
+                                                    : (isSwapped
+                                                          ? Colors.deepOrange
+                                                          : const Color(
+                                                              0xFF2D3436,
+                                                            )),
+                                                fontWeight: isSwapped
+                                                    ? FontWeight.bold
+                                                    : FontWeight.w600,
+                                                fontSize: 15,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                       const SizedBox(height: 4),
 
-                                      // [FIX] Se ci sono ingredienti, mostrali in lista. Altrimenti mostra qtà semplice.
                                       if (hasIngredients)
                                         ...ingredients.map((ing) {
                                           String iName = ing['name'].toString();
                                           String iQty = ing['qty'].toString();
-
-                                          // Relax Mode anche per ingredienti interni
                                           bool iRelax = _relaxableFoods.any(
                                             (tag) => iName
                                                 .toLowerCase()
@@ -266,7 +308,6 @@ class MealCard extends StatelessWidget {
                                           if (isTranquilMode && iRelax) {
                                             iQty = "";
                                           }
-
                                           return Padding(
                                             padding: const EdgeInsets.only(
                                               bottom: 2,
@@ -301,25 +342,29 @@ class MealCard extends StatelessWidget {
                                   ),
                                 ),
 
-                                // Azioni (Swap e Consuma)
+                                // Azioni
                                 if (!isConsumed) ...[
                                   // Swap
                                   if (cadCode > 0)
                                     IconButton(
-                                      icon: const Icon(
-                                        Icons.swap_horiz_rounded,
+                                      icon: Icon(
+                                        // Icona piena se già scambiato
+                                        isSwapped
+                                            ? Icons.swap_horiz
+                                            : Icons.swap_horiz_outlined,
+                                        color: isSwapped
+                                            ? Colors.orange
+                                            : Colors.grey[400],
                                       ),
-                                      color: Colors.grey[400],
                                       splashRadius: 20,
-                                      constraints:
-                                          const BoxConstraints(), // Riduce padding extra
+                                      constraints: const BoxConstraints(),
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 8,
                                       ),
                                       onPressed: () => onSwap(swapKey, cadCode),
                                     ),
 
-                                  // Consuma (Solo se è Oggi)
+                                  // Consuma
                                   if (isToday)
                                     Padding(
                                       padding: const EdgeInsets.only(left: 4),

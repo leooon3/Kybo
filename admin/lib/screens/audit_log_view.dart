@@ -47,12 +47,15 @@ class AuditLogView extends StatelessWidget {
     final bytes = utf8.encode(csvData);
     final blob = html.Blob([bytes]);
     final url = html.Url.createObjectUrlFromBlob(blob);
-    final anchor = html.AnchorElement(href: url)
+
+    // FIX: Rimossa assegnazione variabile 'anchor' inutilizzata
+    html.AnchorElement(href: url)
       ..setAttribute(
         "download",
         "audit_logs_export_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.csv",
       )
       ..click();
+
     html.Url.revokeObjectUrl(url);
   }
 
