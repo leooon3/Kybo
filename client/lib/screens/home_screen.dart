@@ -12,7 +12,6 @@ import '../services/storage_service.dart';
 import '../services/auth_service.dart';
 import '../constants.dart';
 import '../core/error_handler.dart';
-import '../widgets/diet_logo.dart';
 import 'diet_view.dart';
 import 'pantry_view.dart';
 import 'shopping_list_view.dart';
@@ -94,7 +93,6 @@ class _MainScreenContentState extends State<MainScreenContent>
 
     final storage = StorageService();
     try {
-      // Gestione sicura del caricamento allarmi (ritorna List<Map> o dynamic)
       var data = await storage.loadAlarms();
       if (data is List && data.isNotEmpty) {
         final notifs = NotificationService();
@@ -107,8 +105,7 @@ class _MainScreenContentState extends State<MainScreenContent>
   // --- LOGICA TUTORIAL ---
   Future<void> _checkTutorial() async {
     final prefs = await SharedPreferences.getInstance();
-    // Cambia la chiave 'v9' se vuoi testarlo di nuovo
-    bool seen = prefs.getBool('seen_tutorial_v9') ?? false;
+    bool seen = prefs.getBool('seen_tutorial_v10') ?? false;
 
     if (!seen) {
       _startShowcase();
@@ -143,15 +140,39 @@ class _MainScreenContentState extends State<MainScreenContent>
       ).startShowCase([_menuKey, _tranquilKey, _pantryTabKey, _shoppingTabKey]);
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('seen_tutorial_v9', true);
+      await prefs.setBool('seen_tutorial_v10', true);
     }
   }
 
-  // Tasto reset per i test (opzionale, richiamabile dal drawer)
   Future<void> _resetTutorial() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('seen_tutorial_v9', false);
+    await prefs.setBool('seen_tutorial_v10', false);
     _startShowcase();
+  }
+
+  // Helper per mostrare la Privacy Policy (Modale)
+  void _showPrivacyDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Privacy Policy"),
+        content: const SingleChildScrollView(
+          child: Text(
+            "Informativa sulla Privacy\n\n"
+            "I tuoi dati (email, nome, piano alimentare) sono utilizzati esclusivamente per fornirti il servizio Kybo.\n"
+            "I dati sensibili sono protetti e accessibili solo al personale autorizzato per scopi di assistenza tecnica o legale.\n\n"
+            "Per richiedere la cancellazione dei dati, contatta l'amministratore.",
+            style: TextStyle(fontSize: 14),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Chiudi"),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -184,7 +205,6 @@ class _MainScreenContentState extends State<MainScreenContent>
               ),
               iconTheme: const IconThemeData(color: Colors.black),
 
-              // MENU HAMBURGER (Showcase #1)
               leading: Builder(
                 builder: (context) {
                   return Showcase(
@@ -200,7 +220,6 @@ class _MainScreenContentState extends State<MainScreenContent>
                 },
               ),
 
-              // TRANQUIL MODE (Showcase #2)
               actions: [
                 Showcase(
                   key: _tranquilKey,
@@ -240,7 +259,7 @@ class _MainScreenContentState extends State<MainScreenContent>
 
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(
-          indicatorColor: AppColors.primary.withOpacity(0.1),
+          indicatorColor: AppColors.primary.withValues(alpha: 0.1),
           iconTheme: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.selected)) {
               return const IconThemeData(color: AppColors.primary);
@@ -264,7 +283,6 @@ class _MainScreenContentState extends State<MainScreenContent>
           selectedIndex: _currentIndex,
           onDestinationSelected: (i) => setState(() => _currentIndex = i),
           destinations: [
-            // DISPENSA (Showcase #3)
             NavigationDestination(
               icon: Showcase(
                 key: _pantryTabKey,
@@ -281,7 +299,6 @@ class _MainScreenContentState extends State<MainScreenContent>
               label: 'Piano',
             ),
 
-            // LISTA SPESA (Showcase #4)
             NavigationDestination(
               icon: Showcase(
                 key: _shoppingTabKey,
@@ -430,9 +447,23 @@ class _MainScreenContentState extends State<MainScreenContent>
                     _openTimeSettings();
                   },
                 ),
+
+                // --- PRIVACY POLICY NEL MENU ---
+                ListTile(
+                  leading: const Icon(
+                    Icons.privacy_tip,
+                    color: Colors.blueGrey,
+                  ),
+                  title: const Text("Privacy Policy"),
+                  onTap: () {
+                    Navigator.pop(drawerCtx);
+                    _showPrivacyDialog();
+                  },
+                ),
+
                 const Divider(),
 
-                // TASTO RESET TUTORIAL (Solo per Test, rimuovere in produzione se vuoi)
+                // TASTO RESET TUTORIAL
                 ListTile(
                   leading: const Icon(
                     Icons.replay_circle_filled,
@@ -468,6 +499,8 @@ class _MainScreenContentState extends State<MainScreenContent>
     );
   }
 
+  // --- ALTRE FUNZIONI (Upload, Scan, Allarmi) INVARIATE ---
+  // (Le riporto per completezza del file)
   Future<void> _uploadDiet(BuildContext context) async {
     final provider = Provider.of<DietProvider>(context, listen: false);
     try {
@@ -529,9 +562,7 @@ class _MainScreenContentState extends State<MainScreenContent>
     List<Map<String, dynamic>> alarms = [];
     try {
       var data = await storage.loadAlarms();
-      if (data is List) {
-        alarms = List<Map<String, dynamic>>.from(data);
-      }
+      if (data is List) alarms = List<Map<String, dynamic>>.from(data);
     } catch (_) {}
 
     if (!mounted) return;
@@ -541,17 +572,14 @@ class _MainScreenContentState extends State<MainScreenContent>
       builder: (ctx) {
         return StatefulBuilder(
           builder: (innerCtx, setDialogState) {
-            void addAlarm() {
-              setDialogState(() {
-                alarms.add({
-                  'id': DateTime.now().millisecondsSinceEpoch % 100000,
-                  'label': 'Spuntino',
-                  'time': '10:00',
-                  'body': 'Ricorda il tuo spuntino!',
-                });
-              });
-            }
-
+            void addAlarm() => setDialogState(
+              () => alarms.add({
+                'id': DateTime.now().millisecondsSinceEpoch % 100000,
+                'label': 'Spuntino',
+                'time': '10:00',
+                'body': 'Ricorda il tuo spuntino!',
+              }),
+            );
             void removeAlarm(int index) =>
                 setDialogState(() => alarms.removeAt(index));
 
@@ -564,30 +592,28 @@ class _MainScreenContentState extends State<MainScreenContent>
                     children: [
                       IconButton(
                         icon: const Icon(Icons.restore),
-                        onPressed: () {
-                          setDialogState(() {
-                            alarms = [
-                              {
-                                'id': 10,
-                                'label': 'Colazione ☕',
-                                'time': '08:00',
-                                'body': 'È ora di fare il pieno di energia!',
-                              },
-                              {
-                                'id': 11,
-                                'label': 'Pranzo 🥗',
-                                'time': '13:00',
-                                'body': 'Buon appetito! Segui il piano.',
-                              },
-                              {
-                                'id': 12,
-                                'label': 'Cena 🍽️',
-                                'time': '20:00',
-                                'body': 'Chiudi la giornata con gusto.',
-                              },
-                            ];
-                          });
-                        },
+                        onPressed: () => setDialogState(
+                          () => alarms = [
+                            {
+                              'id': 10,
+                              'label': 'Colazione ☕',
+                              'time': '08:00',
+                              'body': 'Sveglia!',
+                            },
+                            {
+                              'id': 11,
+                              'label': 'Pranzo 🥗',
+                              'time': '13:00',
+                              'body': 'Buon appetito!',
+                            },
+                            {
+                              'id': 12,
+                              'label': 'Cena 🍽️',
+                              'time': '20:00',
+                              'body': 'Cena time!',
+                            },
+                          ],
+                        ),
                       ),
                       IconButton(
                         icon: const Icon(Icons.add_circle, color: Colors.blue),
@@ -611,7 +637,6 @@ class _MainScreenContentState extends State<MainScreenContent>
                             hour: int.parse(parts[0]),
                             minute: int.parse(parts[1]),
                           );
-
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
                             child: Padding(
@@ -636,11 +661,12 @@ class _MainScreenContentState extends State<MainScreenContent>
                                             context: innerCtx,
                                             initialTime: time,
                                           );
-                                          if (p != null)
+                                          if (p != null) {
                                             setDialogState(
                                               () => alarm['time'] =
                                                   "${p.hour.toString().padLeft(2, '0')}:${p.minute.toString().padLeft(2, '0')}",
                                             );
+                                          }
                                         },
                                         child: Text(
                                           "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}",
@@ -688,10 +714,11 @@ class _MainScreenContentState extends State<MainScreenContent>
                     final notifs = NotificationService();
                     await notifs.init();
                     await notifs.scheduleAllMeals();
-                    if (mounted)
+                    if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text("Allarmi aggiornati!")),
                       );
+                    }
                   },
                   child: const Text("Salva"),
                 ),

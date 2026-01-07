@@ -76,6 +76,7 @@
       .nav-actions {
         display: flex;
         gap: 15px;
+        align-items: center; /* Centrato verticalmente */
       }
 
       .btn {
@@ -225,15 +226,66 @@
         color: var(--secondary);
       }
 
+      /* --- RESPONSIVE MOBILE --- */
       @media (max-width: 768px) {
-        .hero h1 {
-          font-size: 2.5rem;
-        }
+        /* HEADER MOBILE */
         header {
-          padding: 15px 20px;
+          flex-direction: column; /* Impila logo e azioni */
+          gap: 15px;
+          padding: 15px;
         }
+
         .nav-actions {
-          display: none;
+          width: 100%;
+          justify-content: center; /* Centra i bottoni */
+          flex-wrap: wrap; /* Permetti di andare a capo se serve */
+        }
+
+        .nav-actions span {
+          display: none; /* Nascondi la scritta "Sei un nutrizionista?" su mobile per risparmiare spazio */
+        }
+
+        /* HERO MOBILE */
+        .hero {
+          padding: 60px 20px 40px; /* Meno padding */
+        }
+
+        .hero h1 {
+          font-size: 2.5rem; /* Testo più piccolo */
+        }
+
+        .hero p {
+          font-size: 1rem;
+        }
+
+        /* STORE BUTTONS MOBILE */
+        .hero div[style*="display: flex"] {
+          flex-direction: column; /* Bottoni store uno sotto l'altro */
+          align-items: center;
+        }
+
+        .hero .btn {
+          width: 100%; /* Larghezza piena */
+          max-width: 280px;
+          justify-content: center;
+        }
+
+        /* PHONE MOCKUP */
+        .phone-frame {
+          width: 100%; /* Si adatta alla larghezza */
+          max-width: 280px;
+          height: 560px;
+          border-width: 8px; /* Bordo più sottile */
+        }
+
+        /* FEATURES */
+        .features {
+          padding: 60px 20px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr; /* Una colonna singola */
+          gap: 20px;
         }
       }
     </style>

@@ -3,8 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'user_management_view.dart';
 import 'config_view.dart';
+import 'audit_log_view.dart';
 import '../widgets/diet_logo.dart';
-import 'audit_log_view.dart'; // Assicurati di aver creato questo file come detto prima
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -44,182 +44,212 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  void _onItemSelected(int index) {
+    setState(() => _selectedIndex = index);
+    // Se siamo su mobile (Drawer aperto), chiudiamolo dopo la selezione
+    if (Scaffold.maybeOf(context)?.hasDrawer ?? false) {
+      Navigator.pop(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Definiamo le viste disponibili in base al ruolo
-    // NOTA: L'ordine qui deve corrispondere all'ordine dei tasti nella sidebar!
+    // Viste disponibili
     final List<Widget> views = [
-      const UserManagementView(), // Index 0
-      if (_isAdmin) const ConfigView(), // Index 1 (Admin Only)
-      if (_isAdmin) const AuditLogView(), // Index 2 (Admin Only - NUOVO)
+      const UserManagementView(),
+      if (_isAdmin) const ConfigView(),
+      if (_isAdmin) const AuditLogView(),
     ];
 
-    // Se un nutrizionista prova ad andare su index non validi, resetta a 0
-    if (_selectedIndex >= views.length) {
-      _selectedIndex = 0;
-    }
+    if (_selectedIndex >= views.length) _selectedIndex = 0;
 
-    // Titolo dinamico in base alla pagina selezionata
     String pageTitle = "Utenti";
     if (_selectedIndex == 1) pageTitle = "Configurazione";
     if (_selectedIndex == 2) pageTitle = "Audit Logs";
 
-    return Scaffold(
-      body: Row(
-        children: [
-          // --- SIDEBAR ---
-          Container(
-            width: 260,
-            decoration: const BoxDecoration(color: Color(0xFF1F2937)),
-            child: Column(
-              children: [
-                // Logo
-                Container(
-                  height: 80,
-                  alignment: Alignment.center,
-                  decoration: const BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(color: Color(0xFF374151)),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const DietLogo(size: 40, isDarkBackground: true),
-                      const SizedBox(width: 12),
-                      const Text(
-                        "Kybo",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
+    // --- LAYOUT RESPONSIVE ---
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Consideriamo "Mobile" se la larghezza è < 800 pixel
+        final bool isMobile = constraints.maxWidth < 800;
+
+        if (isMobile) {
+          // --- VERSIONE MOBILE (Con AppBar e Drawer) ---
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(
+                pageTitle,
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.bold,
                 ),
-
-                const SizedBox(height: 20),
-
-                // Menu Items
-                _SidebarItem(
-                  icon: Icons.people_alt_outlined,
-                  label: "Gestione Utenti",
-                  isSelected: _selectedIndex == 0,
-                  onTap: () => setState(() => _selectedIndex = 0),
-                ),
-
-                // Voci Admin
-                if (_isAdmin) ...[
-                  _SidebarItem(
-                    icon: Icons.settings_outlined,
-                    label: "Impostazioni",
-                    isSelected: _selectedIndex == 1,
-                    onTap: () => setState(() => _selectedIndex = 1),
-                  ),
-                  // --- NUOVO TASTO AUDIT LOG ---
-                  _SidebarItem(
-                    icon: Icons.security, // Icona scudo/sicurezza
-                    label: "Audit Logs (Legale)",
-                    isSelected: _selectedIndex == 2,
-                    onTap: () => setState(() => _selectedIndex = 2),
-                  ),
-                ],
-
-                const Spacer(),
-
-                // Profilo Utente Dinamico
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  color: const Color(0xFF111827),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        backgroundColor: _isAdmin ? Colors.purple : Colors.blue,
-                        radius: 16,
-                        child: Text(
-                          _userName.isNotEmpty
-                              ? _userName[0].toUpperCase()
-                              : "?",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _userName,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              _userRole.toUpperCase(),
-                              style: TextStyle(
-                                color: Colors.grey[400],
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.logout,
-                          color: Colors.redAccent,
-                          size: 20,
-                        ),
-                        onPressed: () => FirebaseAuth.instance.signOut(),
-                        tooltip: "Esci",
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
+              backgroundColor: Colors.white,
+              elevation: 1,
+              iconTheme: const IconThemeData(color: Colors.black),
             ),
-          ),
-
-          // --- CONTENT ---
-          Expanded(
-            child: Column(
+            drawer: Drawer(
+              backgroundColor: const Color(0xFF1F2937),
+              child:
+                  _buildSidebarContent(), // Riusiamo lo stesso widget sidebar
+            ),
+            body: views[_selectedIndex],
+          );
+        } else {
+          // --- VERSIONE DESKTOP (Sidebar Fissa) ---
+          return Scaffold(
+            body: Row(
               children: [
-                Container(
-                  height: 80,
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  alignment: Alignment.centerLeft,
-                  color: Colors.white,
-                  child: Text(
-                    pageTitle,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF111827),
-                    ),
+                SizedBox(
+                  width: 260,
+                  child: Container(
+                    color: const Color(0xFF1F2937),
+                    child: _buildSidebarContent(),
                   ),
                 ),
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32.0),
-                    // Qui viene mostrata la vista corretta dalla lista 'views'
-                    child: views[_selectedIndex],
+                  child: Column(
+                    children: [
+                      // Header Desktop
+                      Container(
+                        height: 80,
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        alignment: Alignment.centerLeft,
+                        color: Colors.white,
+                        child: Text(
+                          pageTitle,
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(32.0),
+                          child: views[_selectedIndex],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
+          );
+        }
+      },
+    );
+  }
+
+  // Estraiamo il contenuto della sidebar per usarlo sia nel Drawer che nella colonna fissa
+  Widget _buildSidebarContent() {
+    return Column(
+      children: [
+        // Logo Area
+        Container(
+          height: 80,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: Color(0xFF374151))),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const DietLogo(size: 40, isDarkBackground: true),
+              const SizedBox(width: 12),
+              const Text(
+                "Kybo",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Menu Items
+        _SidebarItem(
+          icon: Icons.people_alt_outlined,
+          label: "Gestione Utenti",
+          isSelected: _selectedIndex == 0,
+          onTap: () => _onItemSelected(0),
+        ),
+
+        if (_isAdmin) ...[
+          _SidebarItem(
+            icon: Icons.settings_outlined,
+            label: "Impostazioni",
+            isSelected: _selectedIndex == 1,
+            onTap: () => _onItemSelected(1),
+          ),
+          _SidebarItem(
+            icon: Icons.security,
+            label: "Audit Logs",
+            isSelected: _selectedIndex == 2,
+            onTap: () => _onItemSelected(2),
           ),
         ],
-      ),
+
+        const Spacer(),
+
+        // Profilo Utente
+        Container(
+          padding: const EdgeInsets.all(16),
+          color: const Color(0xFF111827),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: _isAdmin ? Colors.purple : Colors.blue,
+                radius: 16,
+                child: Text(
+                  _userName.isNotEmpty ? _userName[0].toUpperCase() : "?",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _userName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      _userRole.toUpperCase(),
+                      style: TextStyle(color: Colors.grey[400], fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(
+                  Icons.logout,
+                  color: Colors.redAccent,
+                  size: 20,
+                ),
+                onPressed: () => FirebaseAuth.instance.signOut(),
+                tooltip: "Esci",
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -231,6 +261,7 @@ class _SidebarItem extends StatelessWidget {
   final VoidCallback onTap;
 
   const _SidebarItem({
+    super.key,
     required this.icon,
     required this.label,
     required this.isSelected,

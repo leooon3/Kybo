@@ -172,18 +172,62 @@
         margin-bottom: 30px;
       }
 
-      /* RESPONSIVE */
+      /* --- RESPONSIVE MOBILE --- */
       @media (max-width: 768px) {
+        /* HEADER MOBILE */
+        header {
+          flex-direction: column;
+          padding: 15px 20px;
+          gap: 15px;
+        }
+
+        .nav-actions {
+          width: 100%;
+          display: flex;
+          justify-content: center;
+          gap: 15px;
+        }
+
+        /* HERO MOBILE */
         .hero-pro h1 {
           font-size: 2.2rem;
         }
+
+        .hero-pro {
+          padding: 60px 20px;
+        }
+
+        /* FEATURES MOBILE */
         .feature-row {
-          flex-direction: column;
+          flex-direction: column; /* Impila verticale */
           text-align: center;
           gap: 30px;
+          margin-bottom: 60px;
         }
+
+        /* Sovrascrivi il comportamento "even" per non invertire su mobile */
         .feature-row:nth-child(even) {
           flex-direction: column;
+        }
+
+        .feature-visual {
+          width: 100%;
+          height: 250px; /* Ridotto */
+        }
+
+        .feature-text ul {
+          text-align: left; /* Mantieni le liste allineate a sinistra per leggibilità */
+          display: inline-block;
+        }
+
+        /* CTA BOX MOBILE */
+        .cta-box {
+          margin: 20px;
+          padding: 40px 20px;
+        }
+
+        .cta-box h2 {
+          font-size: 1.8rem;
         }
       }
     </style>

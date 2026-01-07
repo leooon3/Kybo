@@ -80,6 +80,29 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  void _showPrivacyDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Privacy Policy"),
+        content: const SingleChildScrollView(
+          child: Text(
+            "Informativa sulla Privacy\n\n"
+            "I tuoi dati vengono utilizzati per fornire il servizio. "
+            "Continuando accetti il trattamento dei dati personali secondo le normative vigenti.",
+            style: TextStyle(fontSize: 14),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Ok"),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -91,7 +114,6 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // LOGO APP (Immagine)
                 const DietLogo(size: 120),
                 const SizedBox(height: 30),
                 Text(
@@ -157,6 +179,22 @@ class _LoginScreenState extends State<LoginScreen> {
                     _isLogin
                         ? "Non hai un account? Registrati"
                         : "Hai già un account? Accedi",
+                  ),
+                ),
+
+                const SizedBox(height: 40),
+
+                // --- DISCLAIMER PRIVACY ---
+                GestureDetector(
+                  onTap: _showPrivacyDialog,
+                  child: const Text(
+                    "Continuando, accetti la Privacy Policy e i Termini di Servizio",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 12,
+                      decoration: TextDecoration.underline,
+                    ),
                   ),
                 ),
               ],
