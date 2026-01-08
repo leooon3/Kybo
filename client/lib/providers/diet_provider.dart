@@ -10,215 +10,7 @@ import '../services/auth_service.dart';
 import '../models/pantry_item.dart';
 import '../models/active_swap.dart';
 import '../core/error_handler.dart';
-
-class UnitMismatchException implements Exception {
-  final PantryItem item;
-  final String requiredUnit;
-  UnitMismatchException({required this.item, required this.requiredUnit});
-  @override
-  String toString() => "Unità diverse: ${item.unit} vs $requiredUnit";
-}
-
-class IngredientException implements Exception {
-  final String message;
-  IngredientException(this.message);
-  @override
-  String toString() => message;
-}
-
-Map<String, bool> _calculateAvailabilityIsolate(Map<String, dynamic> payload) {
-  final dietData = payload['dietData'] as Map<String, dynamic>;
-  final pantryItemsRaw = payload['pantryItems'] as List<dynamic>;
-  final activeSwapsRaw = payload['activeSwaps'] as Map<String, dynamic>;
-
-  Map<String, double> simulatedFridge = {};
-  for (var item in pantryItemsRaw) {
-    String iName = item['name'].toString().trim().toLowerCase();
-    double iQty = double.tryParse(item['quantity'].toString()) ?? 0.0;
-    String iUnit = item['unit'].toString().toLowerCase();
-
-    if (iUnit == 'kg' || iUnit == 'l') iQty *= 1000;
-    if (iUnit == 'gr') iUnit = 'g';
-    simulatedFridge[iName] = iQty;
-  }
-
-  Map<String, bool> newMap = {};
-  final italianDays = [
-    "Lunedì",
-    "Martedì",
-    "Mercoledì",
-    "Giovedì",
-    "Venerdì",
-    "Sabato",
-    "Domenica",
-  ];
-  final todayIndex = DateTime.now().weekday - 1;
-
-  for (int d = 0; d < italianDays.length; d++) {
-    if (d < todayIndex) continue;
-    String day = italianDays[d];
-    if (!dietData.containsKey(day)) continue;
-    final mealsOfDay = dietData[day] as Map<String, dynamic>;
-    final mealTypes = [
-      "Colazione",
-      "Seconda Colazione",
-      "Spuntino",
-      "Pranzo",
-      "Merenda",
-      "Cena",
-      "Spuntino Serale",
-      "Nell'Arco Della Giornata",
-    ];
-
-    for (var mType in mealTypes) {
-      if (!mealsOfDay.containsKey(mType)) continue;
-      List<dynamic> dishes = List.from(mealsOfDay[mType]);
-      List<List<int>> groups = _buildGroupsStatic(dishes);
-
-      for (int gIdx = 0; gIdx < groups.length; gIdx++) {
-        List<int> indices = groups[gIdx];
-        if (indices.isEmpty) continue;
-        bool isConsumed = false;
-        if (indices.isNotEmpty) {
-          final firstDish = dishes[indices[0]];
-          if (firstDish['consumed'] == true) isConsumed = true;
-        }
-
-        if (isConsumed) {
-          for (int originalIdx in indices) {
-            newMap["${day}_${mType}_$originalIdx"] = false;
-          }
-          continue;
-        }
-
-        final firstDish = dishes[indices[0]];
-        final String? instanceId = firstDish['instance_id']?.toString();
-        final int cadCode = firstDish['cad_code'] ?? 0;
-
-        String swapKey;
-        if (instanceId != null && instanceId.isNotEmpty) {
-          // Chiave univoca robusta (Nuovo Backend)
-          swapKey = "${day}_${mType}_$instanceId";
-        } else {
-          // Fallback legacy (Vecchio Backend / Cache vecchia)
-          swapKey = "${day}_${mType}_$cadCode";
-        }
-
-        bool isSwapped = activeSwapsRaw.containsKey(swapKey);
-
-        if (isSwapped) {
-          final swapData = activeSwapsRaw[swapKey];
-          List<dynamic> swapItems = [];
-          if (swapData['swappedIngredients'] != null &&
-              (swapData['swappedIngredients'] as List).isNotEmpty) {
-            swapItems = swapData['swappedIngredients'];
-          } else {
-            swapItems = [
-              {
-                'name': swapData['name'],
-                'qty': "${swapData['qty']} ${swapData['unit']}",
-              },
-            ];
-          }
-          bool groupCovered = true;
-          for (var item in swapItems) {
-            if (!_checkAndConsumeSimulatedStatic(item, simulatedFridge)) {
-              groupCovered = false;
-            }
-          }
-          for (int originalIdx in indices) {
-            newMap["${day}_${mType}_$originalIdx"] = groupCovered;
-          }
-        } else {
-          for (int i in indices) {
-            final dish = dishes[i];
-            bool isCovered = true;
-            if ((dish['qty']?.toString() ?? "") != "N/A") {
-              List<dynamic> itemsToCheck = [];
-              if (dish['ingredients'] != null &&
-                  (dish['ingredients'] as List).isNotEmpty) {
-                itemsToCheck = dish['ingredients'];
-              } else {
-                itemsToCheck = [
-                  {'name': dish['name'], 'qty': dish['qty']},
-                ];
-              }
-              for (var item in itemsToCheck) {
-                if (!_checkAndConsumeSimulatedStatic(item, simulatedFridge)) {
-                  isCovered = false;
-                }
-              }
-            }
-            newMap["${day}_${mType}_$i"] = isCovered;
-          }
-        }
-      }
-    }
-  }
-  return newMap;
-}
-
-List<List<int>> _buildGroupsStatic(List<dynamic> dishes) {
-  List<List<int>> groups = [];
-  List<int> currentGroupIndices = [];
-  for (int i = 0; i < dishes.length; i++) {
-    final d = dishes[i];
-    String qty = d['qty']?.toString() ?? "";
-    bool isHeader = (qty == "N/A");
-    if (isHeader) {
-      if (currentGroupIndices.isNotEmpty) {
-        groups.add(List.from(currentGroupIndices));
-      }
-      currentGroupIndices = [i];
-    } else {
-      if (currentGroupIndices.isNotEmpty) {
-        currentGroupIndices.add(i);
-      } else {
-        groups.add([i]);
-      }
-    }
-  }
-  if (currentGroupIndices.isNotEmpty) {
-    groups.add(List.from(currentGroupIndices));
-  }
-  return groups;
-}
-
-bool _checkAndConsumeSimulatedStatic(
-  Map<String, dynamic> item,
-  Map<String, double> fridge,
-) {
-  String iName = item['name'].toString().trim().toLowerCase();
-  String iRawQty = item['qty'].toString().toLowerCase();
-  final regExp = RegExp(r'(\d+[.,]?\d*)');
-  final match = regExp.firstMatch(iRawQty);
-  double iQty = match != null
-      ? (double.tryParse(match.group(1)!.replaceAll(',', '.')) ?? 1.0)
-      : 1.0;
-  if (iRawQty.contains('kg') ||
-      iRawQty.contains('l') && !iRawQty.contains('ml')) {
-    iQty *= 1000;
-  }
-  if (iRawQty.contains('vasetto')) iQty = 125.0;
-
-  String? foundKey;
-  for (var key in fridge.keys) {
-    if (key.contains(iName) || iName.contains(key)) {
-      foundKey = key;
-      break;
-    }
-  }
-  if (foundKey != null && fridge[foundKey]! > 0) {
-    if (fridge[foundKey]! >= iQty) {
-      fridge[foundKey] = fridge[foundKey]! - iQty;
-      return true;
-    } else {
-      fridge[foundKey] = 0;
-      return false;
-    }
-  }
-  return false;
-}
+import '../logic/diet_calculator.dart';
 
 class DietProvider extends ChangeNotifier {
   final DietRepository _repository;
@@ -234,6 +26,7 @@ class DietProvider extends ChangeNotifier {
   Map<String, bool> _availabilityMap = {};
   Map<String, double> _conversions = {};
 
+  // Campi per il Sync Intelligente
   DateTime _lastCloudSave = DateTime.fromMillisecondsSinceEpoch(0);
   Map<String, dynamic>? _lastSyncedDiet;
   Map<String, dynamic>? _lastSyncedSubstitutions;
@@ -243,6 +36,7 @@ class DietProvider extends ChangeNotifier {
   bool _isTranquilMode = false;
   String? _error;
 
+  // Getters
   Map<String, dynamic>? get dietData => _dietData;
   Map<String, dynamic>? get substitutions => _substitutions;
   List<PantryItem> get pantryItems => _pantryItems;
@@ -256,11 +50,12 @@ class DietProvider extends ChangeNotifier {
 
   DietProvider(this._repository);
 
+  // --- INIT & SYNC ---
+
   Future<bool> loadFromCache() async {
     bool hasData = false;
     try {
       _setLoading(true);
-
       final savedDiet = await _storage.loadDiet();
       _pantryItems = await _storage.loadPantry();
       _activeSwaps = await _storage.loadSwaps();
@@ -269,16 +64,14 @@ class DietProvider extends ChangeNotifier {
       if (savedDiet != null && savedDiet['plan'] != null) {
         _dietData = savedDiet['plan'];
         _substitutions = savedDiet['substitutions'];
-
+        // Inizializza lo stato di sync
         _lastSyncedDiet = _deepCopy(_dietData);
         _lastSyncedSubstitutions = _deepCopy(_substitutions);
-
         _recalcAvailability();
         hasData = true;
-        debugPrint("📦 Dati caricati dalla Cache Locale");
       }
     } catch (e) {
-      debugPrint("⚠️ Errore Cache (Non bloccante): $e");
+      debugPrint("⚠️ Errore Cache: $e");
     } finally {
       _setLoading(false);
     }
@@ -298,56 +91,92 @@ class DietProvider extends ChangeNotifier {
 
       if (snapshot.docs.isNotEmpty) {
         final data = snapshot.docs.first.data();
-
         if (data['dietData'] != null) {
           _dietData = data['dietData'];
           _substitutions = data['substitutions'];
-
           await _storage.saveDiet({
             'plan': _dietData,
             'substitutions': _substitutions,
           });
 
+          // Aggiorna baseline sync
           _lastSyncedDiet = _deepCopy(_dietData);
           _lastSyncedSubstitutions = _deepCopy(_substitutions);
           _lastCloudSave = DateTime.now();
 
           _recalcAvailability();
           notifyListeners();
-          debugPrint("☁️ Dati sincronizzati da Firebase");
         }
       }
     } catch (e) {
-      debugPrint("⚠️ Sync Cloud fallito (possibile offline): $e");
+      debugPrint("⚠️ Sync Cloud fallito: $e");
     }
   }
 
-  double _normalizeToGrams(double qty, String unit) {
-    final u = unit.trim().toLowerCase();
-    if (u == 'kg' || u == 'l') return qty * 1000;
-    if (u == 'g' || u == 'ml' || u == 'mg' || u == 'gr' || u == 'grammi') {
-      return qty;
-    }
-    if (u.contains('vasetto')) return qty * 125;
-    if (u.contains('cucchiain')) return qty * 5;
-    if (u.contains('cucchiaio')) return qty * 15;
-    return -1.0;
-  }
+  void loadHistoricalDiet(Map<String, dynamic> dietData) {
+    _dietData = dietData['plan'];
+    _substitutions = dietData['substitutions'];
+    _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
+    _activeSwaps = {};
+    _storage.saveSwaps({});
 
-  Future<void> resolveUnitMismatch(
-    String itemName,
-    String fromUnit,
-    String toUnit,
-    double factor,
-  ) async {
-    final key =
-        "${itemName.trim().toLowerCase()}_${fromUnit.trim().toLowerCase()}_to_${toUnit.trim().toLowerCase()}";
-    _conversions[key] = factor;
-    await _storage.saveConversions(_conversions);
+    // Reset sync baseline quando carico uno storico
+    _lastSyncedDiet = _deepCopy(_dietData);
+    _lastSyncedSubstitutions = _deepCopy(_substitutions);
+
+    _recalcAvailability();
     notifyListeners();
   }
 
-  // --- MODIFICATO PER GESTIRE I NULL ---
+  Future<void> refreshAvailability() async {
+    await _recalcAvailability();
+  }
+
+  // --- LOGICA CONSUMO & AGGIORNAMENTO ---
+
+  void updateDietMeal(
+    String day,
+    String meal,
+    int idx,
+    String name,
+    String qty,
+  ) async {
+    if (_dietData != null &&
+        _dietData![day] != null &&
+        _dietData![day][meal] != null) {
+      var currentMeals = List<dynamic>.from(_dietData![day][meal]);
+      if (idx >= 0 && idx < currentMeals.length) {
+        var oldItem = currentMeals[idx];
+        currentMeals[idx] = {...oldItem, 'name': name, 'qty': qty};
+        _dietData![day][meal] = currentMeals;
+        _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
+
+        // SYNC INTELLIGENTE: Usa i campi _lastSyncedDiet/Substitutions per evitare spam
+        if (_auth.currentUser != null) {
+          bool timePassed =
+              DateTime.now().difference(_lastCloudSave) > _cloudSaveInterval;
+
+          // Controlla se ci sono modifiche strutturali reali (ignorando 'consumed')
+          bool isStructurallyDifferent =
+              _hasStructuralChanges(_dietData, _lastSyncedDiet) ||
+              jsonEncode(_substitutions) !=
+                  jsonEncode(_lastSyncedSubstitutions);
+
+          if (timePassed && isStructurallyDifferent) {
+            await _firestore.saveDietToHistory(_dietData!, _substitutions!);
+            _lastCloudSave = DateTime.now();
+            _lastSyncedDiet = _deepCopy(_dietData);
+            _lastSyncedSubstitutions = _deepCopy(_substitutions);
+            debugPrint("☁️ Cloud Sync Eseguito (Modifiche rilevate)");
+          }
+        }
+
+        _recalcAvailability();
+        notifyListeners();
+      }
+    }
+  }
+
   Future<void> consumeMeal(
     String day,
     String mealType,
@@ -358,7 +187,7 @@ class DietProvider extends ChangeNotifier {
     final meals = _dietData![day][mealType];
     if (meals == null || meals is! List || dishIndex >= meals.length) return;
 
-    List<List<int>> groups = _getGroups(meals);
+    List<List<int>> groups = DietCalculator.buildGroups(meals);
     List<int> targetGroupIndices = [];
 
     for (int g = 0; g < groups.length; g++) {
@@ -369,122 +198,29 @@ class DietProvider extends ChangeNotifier {
     }
     if (targetGroupIndices.isEmpty) return;
 
-    // FASE 1: Validazione (Controlla se c'è abbastanza cibo)
+    // FASE 1: Validazione
     if (!force) {
       for (int i in targetGroupIndices) {
-        final dish = meals[i];
-        final String? instanceId = dish['instance_id']?.toString();
-        final int cadCode = dish['cad_code'] ?? 0;
-
-        String swapKey;
-        if (instanceId != null && instanceId.isNotEmpty) {
-          swapKey = "${day}_${mealType}_$instanceId";
-        } else {
-          swapKey = "${day}_${mealType}_$cadCode";
-        }
-
-        // VERIFICA SWAP
-        if (_activeSwaps.containsKey(swapKey)) {
-          final activeSwap = _activeSwaps[swapKey]!;
-          // FIX: Gestione nullable list
-          final List<dynamic> swapIngs = activeSwap.swappedIngredients ?? [];
-
-          if (swapIngs.isNotEmpty) {
-            for (var ing in swapIngs) {
-              _validateItem(ing['name'].toString(), ing['qty'].toString());
-            }
-          } else {
-            // Sostituzione semplice
-            _validateItem(
-              activeSwap.name,
-              "${activeSwap.qty} ${activeSwap.unit}",
-            );
-          }
-        } else {
-          // COMPORTAMENTO ORIGINALE
-          List<dynamic> itemsToCheck = [];
-          if ((dish['qty']?.toString() ?? "") == "N/A") {
-            if (dish['ingredients'] != null) itemsToCheck = dish['ingredients'];
-          } else if (dish['ingredients'] != null &&
-              (dish['ingredients'] as List).isNotEmpty) {
-            itemsToCheck = dish['ingredients'];
-          } else {
-            itemsToCheck = [
-              {'name': dish['name'], 'qty': dish['qty'] ?? '1'},
-            ];
-          }
-          for (var itemData in itemsToCheck) {
-            _validateItem(
-              itemData['name'].toString(),
-              itemData['qty'].toString(),
-            );
-          }
-        }
+        _processItem(
+          meals[i],
+          day,
+          mealType,
+          (name, qty) => _validateItem(name, qty),
+        );
       }
     }
 
-    // FASE 2: Esecuzione (Rimuovi cibo dalla dispensa)
+    // FASE 2: Esecuzione
     for (int i in targetGroupIndices) {
-      final dish = meals[i];
-      final String? instanceId = dish['instance_id']?.toString();
-      final int cadCode = dish['cad_code'] ?? 0;
-
-      String swapKey;
-      if (instanceId != null && instanceId.isNotEmpty) {
-        swapKey = "${day}_${mealType}_$instanceId";
-      } else {
-        swapKey = "${day}_${mealType}_$cadCode";
-      }
-
-      if (_activeSwaps.containsKey(swapKey)) {
-        // CONSUMA ALIMENTO SOSTITUITO
-        final activeSwap = _activeSwaps[swapKey]!;
-        // FIX: Gestione nullable list
-        final List<dynamic> swapIngs = activeSwap.swappedIngredients ?? [];
-
-        if (swapIngs.isNotEmpty) {
-          for (var ing in swapIngs) {
-            _consumeExecute(
-              ing['name'].toString(),
-              ing['qty'].toString(),
-              force: force,
-            );
-          }
-        } else {
-          _consumeExecute(
-            activeSwap.name,
-            "${activeSwap.qty} ${activeSwap.unit}",
-            force: force,
-          );
-        }
-      } else {
-        // CONSUMA ALIMENTO ORIGINALE
-        if ((dish['qty']?.toString() ?? "") == "N/A") {
-          if (dish['ingredients'] != null) {
-            for (var ing in dish['ingredients']) {
-              _consumeExecute(
-                ing['name'].toString(),
-                ing['qty'].toString(),
-                force: force,
-              );
-            }
-          }
-        } else if (dish['ingredients'] != null &&
-            (dish['ingredients'] as List).isNotEmpty) {
-          for (var ing in dish['ingredients']) {
-            _consumeExecute(
-              ing['name'].toString(),
-              ing['qty'].toString(),
-              force: force,
-            );
-          }
-        } else {
-          _consumeExecute(dish['name'], dish['qty'] ?? '1', force: force);
-        }
-      }
+      _processItem(
+        meals[i],
+        day,
+        mealType,
+        (name, qty) => _consumeExecute(name, qty),
+      );
     }
 
-    // FASE 3: Aggiorna UI (Barra l'originale in ogni caso)
+    // FASE 3: Aggiorna UI
     var currentMealsList = List<dynamic>.from(_dietData![day][mealType]);
     for (int i in targetGroupIndices) {
       if (i < currentMealsList.length) {
@@ -500,11 +236,54 @@ class DietProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- HELPER METODS ---
+
+  void _processItem(
+    dynamic dish,
+    String day,
+    String mealType,
+    Function(String, String) action,
+  ) {
+    final String? instanceId = dish['instance_id']?.toString();
+    final int cadCode = dish['cad_code'] ?? 0;
+
+    String swapKey = (instanceId != null && instanceId.isNotEmpty)
+        ? "${day}_${mealType}_$instanceId"
+        : "${day}_${mealType}_$cadCode";
+
+    if (_activeSwaps.containsKey(swapKey)) {
+      final activeSwap = _activeSwaps[swapKey]!;
+      final List<dynamic> swapIngs = activeSwap.swappedIngredients ?? [];
+      if (swapIngs.isNotEmpty) {
+        for (var ing in swapIngs) {
+          action(ing['name'].toString(), ing['qty'].toString());
+        }
+      } else {
+        action(activeSwap.name, "${activeSwap.qty} ${activeSwap.unit}");
+      }
+    } else {
+      List<dynamic> itemsToCheck = [];
+      String qtyStr = dish['qty']?.toString() ?? "";
+      if (qtyStr == "N/A" ||
+          (dish['ingredients'] != null &&
+              (dish['ingredients'] as List).isNotEmpty)) {
+        itemsToCheck = dish['ingredients'] ?? [];
+      } else {
+        itemsToCheck = [
+          {'name': dish['name'], 'qty': qtyStr.isEmpty ? '1' : qtyStr},
+        ];
+      }
+      for (var itemData in itemsToCheck) {
+        action(itemData['name'].toString(), itemData['qty'].toString());
+      }
+    }
+  }
+
   void _validateItem(String name, String rawQtyString) {
     if (rawQtyString == "N/A" || name.toLowerCase().contains("libero")) return;
 
-    double reqQty = _parseQty(rawQtyString);
-    String reqUnit = _parseUnit(rawQtyString, name);
+    double reqQty = DietCalculator.parseQty(rawQtyString);
+    String reqUnit = DietCalculator.parseUnit(rawQtyString, name);
     String normalizedName = name.trim().toLowerCase();
 
     int index = _pantryItems.indexWhere((p) {
@@ -536,12 +315,9 @@ class DietProvider extends ChangeNotifier {
     if (_conversions.containsKey(convKey)) {
       conversionFactor = _conversions[convKey]!;
     } else {
-      double pVal = _normalizeToGrams(1, pItem.unit);
-      double rVal = _normalizeToGrams(1, reqUnit);
-
-      if (pVal > 0 && rVal > 0) {
-        // Compatibili (kg/g)
-      } else {
+      double pVal = DietCalculator.normalizeToGrams(1, pItem.unit);
+      double rVal = DietCalculator.normalizeToGrams(1, reqUnit);
+      if (pVal <= 0 || rVal <= 0) {
         throw UnitMismatchException(item: pItem, requiredUnit: reqUnit);
       }
     }
@@ -550,8 +326,8 @@ class DietProvider extends ChangeNotifier {
     if (_conversions.containsKey(convKey)) {
       reqQtyInPantryUnit = reqQty * conversionFactor;
     } else {
-      double rGrams = _normalizeToGrams(reqQty, reqUnit);
-      double pGrams = _normalizeToGrams(1, pItem.unit);
+      double rGrams = DietCalculator.normalizeToGrams(reqQty, reqUnit);
+      double pGrams = DietCalculator.normalizeToGrams(1, pItem.unit);
       if (pGrams > 0) reqQtyInPantryUnit = rGrams / pGrams;
     }
 
@@ -560,11 +336,10 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
-  void _consumeExecute(String name, String rawQtyString, {bool force = false}) {
+  void _consumeExecute(String name, String rawQtyString) {
     if (rawQtyString == "N/A") return;
-
-    double reqQty = _parseQty(rawQtyString);
-    String reqUnit = _parseUnit(rawQtyString, name);
+    double reqQty = DietCalculator.parseQty(rawQtyString);
+    String reqUnit = DietCalculator.parseUnit(rawQtyString, name);
     String normalizedName = name.trim().toLowerCase();
 
     int index = _pantryItems.indexWhere((p) {
@@ -582,11 +357,9 @@ class DietProvider extends ChangeNotifier {
         if (_conversions.containsKey(convKey)) {
           qtyToSubtract = reqQty * _conversions[convKey]!;
         } else {
-          double rGrams = _normalizeToGrams(reqQty, reqUnit);
-          double pGramsOne = _normalizeToGrams(1, item.unit);
-          if (rGrams > 0 && pGramsOne > 0) {
-            qtyToSubtract = rGrams / pGramsOne;
-          }
+          double rGrams = DietCalculator.normalizeToGrams(reqQty, reqUnit);
+          double pGramsOne = DietCalculator.normalizeToGrams(1, item.unit);
+          if (rGrams > 0 && pGramsOne > 0) qtyToSubtract = rGrams / pGramsOne;
         }
       }
 
@@ -598,121 +371,16 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
-  double _parseQty(String raw) {
-    final regExp = RegExp(r'(\d+[.,]?\d*)');
-    final match = regExp.firstMatch(raw);
-    if (match != null) {
-      return double.tryParse(match.group(1)!.replaceAll(',', '.')) ?? 1.0;
-    }
-    return 1.0;
-  }
-
-  String _parseUnit(String raw, String name) {
-    String lower = raw.toLowerCase().trim();
-    if (lower.contains('kg')) return 'kg';
-    if (lower.contains('mg')) return 'mg';
-    if (lower.contains('ml')) return 'ml';
-    if (lower.contains('l') && !lower.contains('ml')) return 'ml';
-    if (RegExp(r'\b(gr|g|grammi)\b').hasMatch(lower)) return 'g';
-    if (lower.contains('vasett')) return 'vasetto';
-    if (lower.contains('cucchiain')) return 'cucchiaino';
-    if (lower.contains('cucchiai')) return 'cucchiaio';
-    if (lower.contains('fett')) return 'fette';
-    if (lower.contains('tazza')) return 'tazza';
-    if (lower.contains('bicchiere')) return 'bicchiere';
-    if (lower.contains('pz')) return 'pz';
-    return 'pz';
-  }
-
-  List<List<int>> _getGroups(List<dynamic> meals) {
-    return _buildGroupsStatic(meals);
-  }
-
-  void updateDietMeal(
-    String day,
-    String meal,
-    int idx,
-    String name,
-    String qty,
+  Future<void> resolveUnitMismatch(
+    String itemName,
+    String fromUnit,
+    String toUnit,
+    double factor,
   ) async {
-    if (_dietData != null &&
-        _dietData![day] != null &&
-        _dietData![day][meal] != null) {
-      var currentMeals = List<dynamic>.from(_dietData![day][meal]);
-      if (idx >= 0 && idx < currentMeals.length) {
-        var oldItem = currentMeals[idx];
-        currentMeals[idx] = {...oldItem, 'name': name, 'qty': qty};
-        _dietData![day][meal] = currentMeals;
-
-        _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
-
-        if (_auth.currentUser != null) {
-          bool timePassed =
-              DateTime.now().difference(_lastCloudSave) > _cloudSaveInterval;
-          if (timePassed) {
-            bool isStructurallyDifferent =
-                _hasStructuralChanges(_dietData, _lastSyncedDiet) ||
-                jsonEncode(_substitutions) !=
-                    jsonEncode(_lastSyncedSubstitutions);
-
-            if (isStructurallyDifferent) {
-              await _firestore.saveDietToHistory(_dietData!, _substitutions!);
-              _lastCloudSave = DateTime.now();
-              _lastSyncedDiet = _deepCopy(_dietData);
-              _lastSyncedSubstitutions = _deepCopy(_substitutions);
-              debugPrint("☁️ Cloud Sync Eseguito (Differenze Rilevate)");
-            } else {
-              debugPrint("⏳ Cloud Sync Saltato (Nessuna modifica strutturale)");
-            }
-          } else {
-            debugPrint("⏳ Cloud Sync Throttled (< 3h)");
-          }
-        }
-
-        _recalcAvailability();
-        notifyListeners();
-      }
-    }
-  }
-
-  dynamic _sanitize(dynamic input) {
-    if (input is Map) {
-      final newMap = <String, dynamic>{};
-      input.forEach((key, value) {
-        if (key != 'consumed' && key != 'cad_code') {
-          newMap[key.toString()] = _sanitize(value);
-        }
-      });
-      return newMap;
-    } else if (input is List) {
-      return input.map((e) => _sanitize(e)).toList();
-    }
-    return input;
-  }
-
-  bool _hasStructuralChanges(
-    Map<String, dynamic>? current,
-    Map<String, dynamic>? old,
-  ) {
-    if (current == null && old == null) return false;
-    if (current == null || old == null) return true;
-    String sCurrent = jsonEncode(_sanitize(current));
-    String sOld = jsonEncode(_sanitize(old));
-    return sCurrent != sOld;
-  }
-
-  Map<String, dynamic>? _deepCopy(Map<String, dynamic>? input) {
-    if (input == null) return null;
-    return jsonDecode(jsonEncode(input));
-  }
-
-  void clearError() {
-    _error = null;
-    notifyListeners();
-  }
-
-  void _setLoading(bool val) {
-    _isLoading = val;
+    final key =
+        "${itemName.trim().toLowerCase()}_${fromUnit.trim().toLowerCase()}_to_${toUnit.trim().toLowerCase()}";
+    _conversions[key] = factor;
+    await _storage.saveConversions(_conversions);
     notifyListeners();
   }
 
@@ -742,7 +410,6 @@ class DietProvider extends ChangeNotifier {
       _recalcAvailability();
     } catch (e) {
       _error = ErrorMapper.toUserMessage(e);
-      debugPrint("❌ Errore Upload: $e");
       rethrow;
     } finally {
       _setLoading(false);
@@ -754,13 +421,12 @@ class DietProvider extends ChangeNotifier {
     clearError();
     int count = 0;
     try {
-      List<String> allowedFoods = _extractAllowedFoods();
-      final items = await _repository.scanReceipt(path, allowedFoods);
+      final items = await _repository.scanReceipt(path, _extractAllowedFoods());
       for (var item in items) {
         if (item is Map && item.containsKey('name')) {
           String rawQty = item['quantity']?.toString() ?? "1";
-          double qty = _parseQty(rawQty);
-          String unit = _parseUnit(rawQty, item['name']);
+          double qty = DietCalculator.parseQty(rawQty);
+          String unit = DietCalculator.parseUnit(rawQty, item['name']);
           if (rawQty.toLowerCase().contains('l') &&
               !rawQty.toLowerCase().contains('ml')) {
             qty *= 1000;
@@ -772,7 +438,6 @@ class DietProvider extends ChangeNotifier {
       }
     } catch (e) {
       _error = ErrorMapper.toUserMessage(e);
-      debugPrint("❌ Errore Scan: $e");
       rethrow;
     } finally {
       _setLoading(false);
@@ -814,10 +479,6 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> refreshAvailability() async {
-    await _recalcAvailability();
-  }
-
   Future<void> _recalcAvailability() async {
     if (_dietData == null) return;
     final payload = {
@@ -835,7 +496,10 @@ class DietProvider extends ChangeNotifier {
       ),
     };
     try {
-      final newMap = await compute(_calculateAvailabilityIsolate, payload);
+      final newMap = await compute(
+        DietCalculator.calculateAvailabilityIsolate,
+        payload,
+      );
       _availabilityMap = newMap;
       notifyListeners();
     } catch (e) {
@@ -843,15 +507,7 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
-  void loadHistoricalDiet(Map<String, dynamic> dietData) {
-    _dietData = dietData['plan'];
-    _substitutions = dietData['substitutions'];
-    _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
-    _activeSwaps = {};
-    _storage.saveSwaps({});
-    _recalcAvailability();
-    notifyListeners();
-  }
+  // --- UTILS & HELPERS ---
 
   List<String> _extractAllowedFoods() {
     final Set<String> foods = {};
@@ -880,24 +536,23 @@ class DietProvider extends ChangeNotifier {
     return foods.toList();
   }
 
-  void updateShoppingList(List<String> list) {
-    _shoppingList = list;
+  void clearError() {
+    _error = null;
     notifyListeners();
   }
 
-  Future<void> clearData() async {
-    await _storage.clearAll();
-    _dietData = null;
-    _substitutions = null;
-    _pantryItems = [];
-    _activeSwaps = {};
-    _shoppingList = [];
-    _conversions = {};
+  void _setLoading(bool val) {
+    _isLoading = val;
     notifyListeners();
   }
 
   void toggleTranquilMode() {
     _isTranquilMode = !_isTranquilMode;
+    notifyListeners();
+  }
+
+  void updateShoppingList(List<String> list) {
+    _shoppingList = list;
     notifyListeners();
   }
 
@@ -916,5 +571,49 @@ class DietProvider extends ChangeNotifier {
     } catch (e) {
       rethrow;
     }
+  }
+
+  Future<void> clearData() async {
+    await _storage.clearAll();
+    _dietData = null;
+    _substitutions = null;
+    _pantryItems = [];
+    _activeSwaps = {};
+    _shoppingList = [];
+    _conversions = {};
+    notifyListeners();
+  }
+
+  // Deep copy e Helpers per il Sync differenziale
+  Map<String, dynamic>? _deepCopy(Map<String, dynamic>? input) {
+    if (input == null) return null;
+    return jsonDecode(jsonEncode(input));
+  }
+
+  bool _hasStructuralChanges(
+    Map<String, dynamic>? current,
+    Map<String, dynamic>? old,
+  ) {
+    if (current == null && old == null) return false;
+    if (current == null || old == null) return true;
+    String sCurrent = jsonEncode(_sanitize(current));
+    String sOld = jsonEncode(_sanitize(old));
+    return sCurrent != sOld;
+  }
+
+  // Rimuove campi volatili (consumed) per confrontare solo la struttura
+  dynamic _sanitize(dynamic input) {
+    if (input is Map) {
+      final newMap = <String, dynamic>{};
+      input.forEach((key, value) {
+        if (key != 'consumed' && key != 'cad_code') {
+          newMap[key.toString()] = _sanitize(value);
+        }
+      });
+      return newMap;
+    } else if (input is List) {
+      return input.map((e) => _sanitize(e)).toList();
+    }
+    return input;
   }
 }

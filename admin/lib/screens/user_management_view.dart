@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -26,41 +25,43 @@ class _UserManagementViewState extends State<UserManagementView> {
   String _currentUserRole = '';
   bool _isDataLoaded = false;
 
+  // DATI UTENTI (Ora scaricati via API Secure)
+  Future<List<dynamic>>? _usersFuture;
+
   @override
   void initState() {
     super.initState();
     _checkCurrentUser();
   }
 
+  // UPDATED: Usa i claims del token, zero letture DB!
   Future<void> _checkCurrentUser() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      if (mounted && doc.exists) {
-        final data = doc.data() as Map<String, dynamic>;
-        setState(() {
-          _currentUserId = user.uid;
-          _currentUserRole = data['role'] ?? 'user';
-          _isDataLoaded = true;
-        });
+      try {
+        // Forza il refresh del token per avere i claims aggiornati
+        final tokenResult = await user.getIdTokenResult(true);
+        final role = tokenResult.claims?['role'] ?? 'user';
+
+        if (mounted) {
+          setState(() {
+            _currentUserId = user.uid;
+            _currentUserRole = role;
+            _isDataLoaded = true;
+          });
+          _refreshList();
+        }
+      } catch (e) {
+        // Fallback in caso di errore di rete
+        if (mounted) setState(() => _isDataLoaded = true);
       }
     }
   }
 
-  Stream<QuerySnapshot> _getUsersStream() {
-    final usersRef = FirebaseFirestore.instance.collection('users');
-    if (_currentUserRole == 'admin') {
-      return usersRef.snapshots();
-    } else if (_currentUserRole == 'nutritionist') {
-      return usersRef
-          .where('created_by', isEqualTo: _currentUserId)
-          .snapshots();
-    } else {
-      return const Stream.empty();
-    }
+  void _refreshList() {
+    setState(() {
+      _usersFuture = _repo.getSecureUsersList();
+    });
   }
 
   // --- ACTIONS ---
@@ -73,6 +74,7 @@ class _UserManagementViewState extends State<UserManagementView> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg), backgroundColor: Colors.blue),
         );
+        _refreshList(); // Ricarica lista dopo sync
       }
     } catch (e) {
       if (mounted) {
@@ -95,7 +97,9 @@ class _UserManagementViewState extends State<UserManagementView> {
           context: context,
           builder: (c) => AlertDialog(
             title: const Text("Elimina Utente"),
-            content: const Text("Sei sicuro? L'azione è irreversibile."),
+            content: const Text(
+              "Sei sicuro? L'azione è irreversibile e verrà loggata.",
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(c, false),
@@ -119,6 +123,7 @@ class _UserManagementViewState extends State<UserManagementView> {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text("Utente eliminato.")));
+          _refreshList(); // Ricarica lista
         }
       } catch (e) {
         if (mounted) {
@@ -236,6 +241,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text("Utente aggiornato")),
                   );
+                  _refreshList(); // Ricarica
                 }
               } catch (e) {
                 if (mounted) {
@@ -303,6 +309,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text("Utente assegnato!")),
                     );
+                    _refreshList(); // Ricarica
                   }
                 } catch (e) {
                   if (mounted) {
@@ -339,13 +346,11 @@ class _UserManagementViewState extends State<UserManagementView> {
           title: const Text("Gestisci Assegnazione"),
           content: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
                 "Sposta utente ad un altro nutrizionista:",
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 initialValue: selectedNutId,
                 isExpanded: true,
@@ -360,43 +365,34 @@ class _UserManagementViewState extends State<UserManagementView> {
                   labelText: "Nuovo Nutrizionista",
                 ),
               ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.person_off, color: Colors.red),
-                  label: const Text(
-                    "Rimuovi Assegnazione",
-                    style: TextStyle(color: Colors.red),
-                  ),
-                  onPressed: () async {
-                    Navigator.pop(ctx);
-                    setState(() => _isLoading = true);
-                    try {
-                      await _repo.unassignUser(targetUid);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("Utente rimosso dal nutrizionista."),
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text("Errore: $e"),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    } finally {
-                      if (mounted) setState(() => _isLoading = false);
-                    }
-                  },
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.person_off, color: Colors.red),
+                label: const Text(
+                  "Rimuovi Assegnazione",
+                  style: TextStyle(color: Colors.red),
                 ),
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  setState(() => _isLoading = true);
+                  try {
+                    await _repo.unassignUser(targetUid);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Assegnazione rimossa.")),
+                      );
+                      _refreshList(); // Ricarica
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text("Errore: $e")));
+                    }
+                  } finally {
+                    if (mounted) setState(() => _isLoading = false);
+                  }
+                },
               ),
             ],
           ),
@@ -419,15 +415,13 @@ class _UserManagementViewState extends State<UserManagementView> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text("Utente trasferito!")),
                     );
+                    _refreshList(); // Ricarica
                   }
                 } catch (e) {
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text("Errore: $e"),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text("Errore: $e")));
                   }
                 } finally {
                   if (mounted) setState(() => _isLoading = false);
@@ -496,7 +490,6 @@ class _UserManagementViewState extends State<UserManagementView> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
                   TextField(
                     controller: emailCtrl,
                     decoration: const InputDecoration(
@@ -504,7 +497,6 @@ class _UserManagementViewState extends State<UserManagementView> {
                       prefixIcon: Icon(Icons.email),
                     ),
                   ),
-                  const SizedBox(height: 16),
                   TextField(
                     controller: passCtrl,
                     decoration: const InputDecoration(
@@ -512,7 +504,6 @@ class _UserManagementViewState extends State<UserManagementView> {
                       prefixIcon: Icon(Icons.key),
                     ),
                   ),
-                  const SizedBox(height: 24),
                   DropdownButtonFormField<String>(
                     initialValue: role,
                     decoration: const InputDecoration(labelText: "Ruolo"),
@@ -544,6 +535,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text("Utente creato!")),
                     );
+                    _refreshList(); // Ricarica
                   }
                 } catch (e) {
                   if (mounted) {
@@ -563,8 +555,6 @@ class _UserManagementViewState extends State<UserManagementView> {
     );
   }
 
-  // --- HELPERS ---
-
   Color _getRoleColor(String role) {
     switch (role.toLowerCase()) {
       case 'admin':
@@ -577,8 +567,6 @@ class _UserManagementViewState extends State<UserManagementView> {
         return Colors.green;
     }
   }
-
-  // --- BUILD METHODS ---
 
   @override
   Widget build(BuildContext context) {
@@ -609,8 +597,6 @@ class _UserManagementViewState extends State<UserManagementView> {
                     hintText: "Cerca utente...",
                     prefixIcon: Icon(Icons.search),
                     border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    fillColor: Colors.transparent,
                   ),
                   onChanged: (val) =>
                       setState(() => _searchQuery = val.toLowerCase()),
@@ -639,19 +625,33 @@ class _UserManagementViewState extends State<UserManagementView> {
                   ],
                   onChanged: (val) => setState(() => _roleFilter = val!),
                 ),
-              ],
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.sync, color: Colors.blue),
-                tooltip: "Sync DB",
-                onPressed: _isLoading ? null : _syncUsers,
-              ),
-              const SizedBox(width: 12),
-              FilledButton.icon(
-                onPressed: _isLoading ? null : _showCreateUserDialog,
-                icon: const Icon(Icons.add),
-                label: const Text("NUOVO UTENTE"),
-              ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.refresh, color: Colors.green),
+                  tooltip: "Ricarica Lista",
+                  onPressed: _refreshList,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.sync, color: Colors.blue),
+                  tooltip: "Sync DB",
+                  onPressed: _isLoading ? null : _syncUsers,
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _isLoading ? null : _showCreateUserDialog,
+                  icon: const Icon(Icons.add),
+                  label: const Text("NUOVO UTENTE"),
+                ),
+              ] else
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      icon: const Icon(Icons.refresh, color: Colors.green),
+                      onPressed: _refreshList,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -662,38 +662,47 @@ class _UserManagementViewState extends State<UserManagementView> {
 
         // --- CONTENT ---
         Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: _getUsersStream(),
+          child: FutureBuilder<List<dynamic>>(
+            future: _usersFuture,
             builder: (context, snapshot) {
-              if (snapshot.hasError) return Text('Err: ${snapshot.error}');
-              if (!snapshot.hasData) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text(
+                    'Errore Caricamento: ${snapshot.error}',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                );
+              }
+              if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return const Center(
+                  child: Text(
+                    "Nessun utente trovato.",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                );
+              }
 
-              var allDocs = snapshot.data!.docs;
-
-              // Pre-calculate Nutritionist Names for Headers
+              var allUsers = snapshot.data!;
               final nutNameMap = <String, String>{};
-              for (var doc in allDocs) {
-                final d = doc.data() as Map<String, dynamic>;
-                if (d['role'] == 'nutritionist') {
-                  nutNameMap[doc.id] =
-                      "${d['first_name'] ?? ''} ${d['last_name'] ?? ''}".trim();
-                  if (nutNameMap[doc.id]!.isEmpty) {
-                    nutNameMap[doc.id] = d['email'] ?? 'Unknown';
+              for (var u in allUsers) {
+                if (u['role'] == 'nutritionist') {
+                  nutNameMap[u['uid']] =
+                      "${u['first_name'] ?? ''} ${u['last_name'] ?? ''}".trim();
+                  if (nutNameMap[u['uid']]!.isEmpty) {
+                    nutNameMap[u['uid']] = u['email'] ?? 'Unknown';
                   }
                 }
               }
 
-              // Filter Logic
-              final filteredDocs = allDocs.where((doc) {
-                final data = doc.data() as Map<String, dynamic>;
-                final role = (data['role'] ?? 'user').toString().toLowerCase();
+              final filteredUsers = allUsers.where((user) {
+                final role = (user['role'] ?? 'user').toString().toLowerCase();
                 final name =
-                    "${data['first_name'] ?? ''} ${data['last_name'] ?? ''}"
+                    "${user['first_name'] ?? ''} ${user['last_name'] ?? ''}"
                         .toLowerCase();
-                final email = (data['email'] ?? '').toString().toLowerCase();
-
+                final email = (user['email'] ?? '').toString().toLowerCase();
                 if (_currentUserRole == 'admin' &&
                     _roleFilter != 'all' &&
                     role != _roleFilter) {
@@ -706,20 +715,19 @@ class _UserManagementViewState extends State<UserManagementView> {
                 return true;
               }).toList();
 
-              if (filteredDocs.isEmpty) {
+              if (filteredUsers.isEmpty) {
                 return const Center(
                   child: Text(
-                    "Nessun utente trovato.",
+                    "Nessun utente corrisponde alla ricerca.",
                     style: TextStyle(color: Colors.grey),
                   ),
                 );
               }
 
-              // Conditional Rendering based on Role
               if (_currentUserRole == 'admin') {
-                return _buildAdminGroupedLayout(filteredDocs, nutNameMap);
+                return _buildAdminGroupedLayout(filteredUsers, nutNameMap);
               } else {
-                return _buildUserGrid(filteredDocs);
+                return _buildUserGrid(filteredUsers);
               }
             },
           ),
@@ -728,7 +736,7 @@ class _UserManagementViewState extends State<UserManagementView> {
     );
   }
 
-  Widget _buildUserGrid(List<DocumentSnapshot> docs) {
+  Widget _buildUserGrid(List<dynamic> users) {
     return GridView.builder(
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 400,
@@ -736,62 +744,57 @@ class _UserManagementViewState extends State<UserManagementView> {
         crossAxisSpacing: 20,
         mainAxisSpacing: 20,
       ),
-      itemCount: docs.length,
+      itemCount: users.length,
       itemBuilder: (context, index) {
         return _UserCard(
-          doc: docs[index],
-          onDelete: _deleteUser,
+          user: users[index],
+          onDelete: (uid) => _deleteUser(uid),
           onUploadDiet: _uploadDiet,
           onUploadParser: _uploadParser,
-          onHistory: (uid) => _showUserHistory(
-            uid,
-            (docs[index].data() as Map)['first_name'] ?? 'User',
-          ),
+          onHistory: (uid) =>
+              _showUserHistory(uid, users[index]['first_name'] ?? 'User'),
           onEdit: _editUser,
           onAssign: null,
           currentUserRole: _currentUserRole,
           currentUserId: _currentUserId,
-          roleColor: _getRoleColor(
-            (docs[index].data() as Map<String, dynamic>)['role'] ?? 'user',
-          ),
+          roleColor: _getRoleColor(users[index]['role'] ?? 'user'),
         );
       },
     );
   }
 
   Widget _buildAdminGroupedLayout(
-    List<DocumentSnapshot> docs,
+    List<dynamic> users,
     Map<String, String> nutNameMap,
   ) {
-    final admins = <DocumentSnapshot>[];
-    final independents = <DocumentSnapshot>[];
-    final nutritionistGroups = <String, List<DocumentSnapshot>>{};
-    final nutritionistDocs = <String, DocumentSnapshot>{};
+    final admins = <dynamic>[];
+    final independents = <dynamic>[];
+    final nutritionistGroups = <String, List<dynamic>>{};
+    final nutritionistDocs = <String, dynamic>{};
 
-    for (var doc in docs) {
-      final data = doc.data() as Map<String, dynamic>;
-      final role = (data['role'] ?? 'user').toString().toLowerCase();
-      final createdBy = data['created_by'] as String?;
+    for (var user in users) {
+      final role = (user['role'] ?? 'user').toString().toLowerCase();
+      final parentId =
+          user['parent_id'] as String? ?? user['created_by'] as String?;
+      final uid = user['uid'] as String;
 
       if (role == 'admin') {
-        admins.add(doc);
+        admins.add(user);
       } else if (role == 'independent') {
-        independents.add(doc);
+        independents.add(user);
       } else if (role == 'nutritionist') {
-        nutritionistDocs[doc.id] = doc;
-        if (!nutritionistGroups.containsKey(doc.id)) {
-          nutritionistGroups[doc.id] = [];
-        }
+        nutritionistDocs[uid] = user;
+        if (!nutritionistGroups.containsKey(uid)) nutritionistGroups[uid] = [];
       } else if (role == 'user') {
-        if (createdBy != null &&
-            (nutNameMap.containsKey(createdBy) ||
-                nutritionistDocs.containsKey(createdBy))) {
-          if (!nutritionistGroups.containsKey(createdBy)) {
-            nutritionistGroups[createdBy] = [];
+        if (parentId != null &&
+            (nutNameMap.containsKey(parentId) ||
+                nutritionistDocs.containsKey(parentId))) {
+          if (!nutritionistGroups.containsKey(parentId)) {
+            nutritionistGroups[parentId] = [];
           }
-          nutritionistGroups[createdBy]!.add(doc);
+          nutritionistGroups[parentId]!.add(user);
         } else {
-          independents.add(doc);
+          independents.add(user);
         }
       }
     }
@@ -824,7 +827,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                     child: SizedBox(
                       height: 240,
                       child: _UserCard(
-                        doc: nutDoc,
+                        user: nutDoc,
                         onDelete: _deleteUser,
                         onUploadDiet: _uploadDiet,
                         onUploadParser: _uploadParser,
@@ -851,13 +854,13 @@ class _UserManagementViewState extends State<UserManagementView> {
                     itemCount: clients.length,
                     padding: const EdgeInsets.all(10),
                     itemBuilder: (ctx, idx) => _UserCard(
-                      doc: clients[idx],
+                      user: clients[idx],
                       onDelete: _deleteUser,
                       onUploadDiet: _uploadDiet,
                       onUploadParser: _uploadParser,
                       onHistory: (uid) => _showUserHistory(
                         uid,
-                        (clients[idx].data() as Map)['first_name'] ?? 'Client',
+                        clients[idx]['first_name'] ?? 'Client',
                       ),
                       onEdit: _editUser,
                       onAssign: (uid) =>
@@ -903,13 +906,13 @@ class _UserManagementViewState extends State<UserManagementView> {
             ),
             itemCount: independents.length,
             itemBuilder: (ctx, idx) => _UserCard(
-              doc: independents[idx],
+              user: independents[idx],
               onDelete: _deleteUser,
               onUploadDiet: _uploadDiet,
               onUploadParser: _uploadParser,
               onHistory: (uid) => _showUserHistory(
                 uid,
-                (independents[idx].data() as Map)['first_name'] ?? 'User',
+                independents[idx]['first_name'] ?? 'User',
               ),
               onEdit: _editUser,
               onAssign: (uid) => _assignUser(uid, nutNameMap),
@@ -938,7 +941,7 @@ class _UserManagementViewState extends State<UserManagementView> {
             ),
             itemCount: admins.length,
             itemBuilder: (ctx, idx) => _UserCard(
-              doc: admins[idx],
+              user: admins[idx],
               onDelete: _deleteUser,
               onUploadDiet: _uploadDiet,
               onUploadParser: _uploadParser,
@@ -957,7 +960,7 @@ class _UserManagementViewState extends State<UserManagementView> {
 }
 
 class _UserCard extends StatefulWidget {
-  final DocumentSnapshot doc;
+  final Map<String, dynamic> user;
   final Function(String) onDelete;
   final Function(String) onUploadDiet;
   final Function(String) onUploadParser;
@@ -969,7 +972,7 @@ class _UserCard extends StatefulWidget {
   final Color roleColor;
 
   const _UserCard({
-    required this.doc,
+    required this.user,
     required this.onDelete,
     required this.onUploadDiet,
     required this.onUploadParser,
@@ -986,44 +989,26 @@ class _UserCard extends StatefulWidget {
 }
 
 class _UserCardState extends State<_UserCard> {
-  // Stato locale: true = vedo i dati in chiaro per questa sessione
   bool _isUnlocked = false;
-  bool _isUnlocking = false; // Per lo spinner durante la chiamata al server
-
+  bool _isUnlocking = false;
   final AdminRepository _repo = AdminRepository();
 
-  String _maskEmail(String email) {
-    if (email.length <= 4) return "****";
-    final parts = email.split('@');
-    if (parts.length != 2) return "****";
-    return "${parts[0][0]}***@***.${parts[1].split('.').last}";
-  }
-
-  String _maskName(String name) {
-    final parts = name.split(' ');
-    if (parts.isEmpty) return "***";
-    return parts.map((p) => p.isNotEmpty ? "${p[0]}***" : "*").join(' ');
-  }
+  String _maskEmail(String email) => (email.length <= 4)
+      ? "****"
+      : "${email.split('@')[0][0]}***@***.${email.split('.').last}";
+  String _maskName(String name) =>
+      name.split(' ').map((p) => p.isNotEmpty ? "${p[0]}***" : "*").join(' ');
 
   Future<void> _unlockData() async {
     setState(() => _isUnlocking = true);
     try {
-      // 1. Chiamata al server per loggare l'azione (OBBLIGATORIO)
-      // Se questa fallisce, l'utente NON vedrà i dati.
-      await _repo.logDataAccess(widget.doc.id);
-
-      // 2. Se successo, sblocca localmente
+      await _repo.logDataAccess(widget.user['uid']);
       if (mounted) {
-        setState(() {
-          _isUnlocked = true;
-        });
+        setState(() => _isUnlocked = true);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              "Dati sbloccati. Accesso registrato nel log di sicurezza.",
-            ),
+            content: Text("Dati sbloccati."),
             backgroundColor: Colors.orange,
-            duration: Duration(seconds: 2),
           ),
         );
       }
@@ -1043,44 +1028,47 @@ class _UserCardState extends State<_UserCard> {
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.doc.data() as Map<String, dynamic>;
+    final data = widget.user;
+    final uid = data['uid'] as String;
     final role = data['role'] ?? 'user';
-
-    final realFirstName = data['first_name'] ?? '';
-    final realLastName = data['last_name'] ?? '';
-    final realName = "$realFirstName $realLastName";
+    final realName = "${data['first_name'] ?? ''} ${data['last_name'] ?? ''}";
     final realEmail = data['email'] ?? '';
 
-    // LOGICA PRIVACY:
-    // Se sono Admin, di base vedo mascherato.
-    // Se clicco il tasto e il server conferma il log, _isUnlocked diventa true e vedo tutto.
     final bool isAdmin = widget.currentUserRole == 'admin';
-    final bool isTargetProfessional =
-        (role == 'nutritionist' || role == 'admin');
+    final bool isMyClient =
+        widget.currentUserRole == 'nutritionist' &&
+        data['parent_id'] == widget.currentUserId;
 
-    // Maschera se: Sono Admin AND non è un collega AND non ho sbloccato manualmente
-    final bool shouldMask = isAdmin && !isTargetProfessional && !_isUnlocked;
+    // Privacy Logic: Admin maschera se non sbloccato; Nutrizionista maschera se non suo cliente.
+    final bool shouldMask =
+        !_isUnlocked &&
+        ((isAdmin && (role == 'user' || role == 'independent')) ||
+            (widget.currentUserRole == 'nutritionist' && !isMyClient));
 
     final String displayName = shouldMask ? _maskName(realName) : realName;
     final String displayEmail = shouldMask ? _maskEmail(realEmail) : realEmail;
-
-    final date = data['created_at'] != null
-        ? DateFormat(
-            'dd MMM yyyy',
-          ).format((data['created_at'] as Timestamp).toDate())
-        : '-';
-    final createdBy = data['created_by'];
     final requiresPassChange = data['requires_password_change'] == true;
 
-    // Permessi (Invariati)
-    bool showParser = isAdmin;
+    bool showParser = isAdmin && data['parent_id'] == null;
     bool showDiet = !isAdmin && (role == 'user' || role == 'independent');
     bool canDelete =
-        isAdmin || (role == 'user' && createdBy == widget.currentUserId);
+        isAdmin ||
+        (role == 'user' && data['parent_id'] == widget.currentUserId);
     bool canEdit =
-        requiresPassChange && (isAdmin || createdBy == widget.currentUserId);
+        requiresPassChange &&
+        (isAdmin || data['created_by'] == widget.currentUserId);
     bool canAssign =
         (role == 'independent' || role == 'user') && widget.onAssign != null;
+
+    String dateStr = '-';
+    if (data['created_at'] != null) {
+      try {
+        final d = DateTime.tryParse(data['created_at'].toString());
+        if (d != null) dateStr = DateFormat('dd MMM yyyy').format(d);
+      } catch (e) {
+        debugPrint("Date parse error: $e");
+      }
+    }
 
     return Card(
       child: Padding(
@@ -1123,19 +1111,16 @@ class _UserCardState extends State<_UserCard> {
                       ),
                       if (isAdmin)
                         Text(
-                          "UID: ${widget.doc.id}",
+                          "UID: $uid",
                           style: const TextStyle(
                             color: Colors.grey,
                             fontSize: 10,
                             fontFamily: 'monospace',
                           ),
-                          overflow: TextOverflow.ellipsis,
                         ),
                     ],
                   ),
                 ),
-
-                // --- TASTO SBLOCCO (Solo se mascherato) ---
                 if (shouldMask)
                   _isUnlocking
                       ? const SizedBox(
@@ -1148,11 +1133,9 @@ class _UserCardState extends State<_UserCard> {
                             Icons.lock_outline,
                             color: Colors.orange,
                           ),
-                          tooltip: "Sblocca Dati (Registra Log)",
-                          onPressed:
-                              _unlockData, // Chiama la funzione con log server-side
+                          tooltip: "Sblocca Dati",
+                          onPressed: _unlockData,
                         ),
-
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -1201,19 +1184,16 @@ class _UserCardState extends State<_UserCard> {
                       role == 'user' ? Icons.manage_accounts : Icons.person_add,
                       color: Colors.blue,
                     ),
-                    tooltip: "Gestisci Assegnazione",
-                    onPressed: () => widget.onAssign!(data['uid']),
+                    onPressed: () => widget.onAssign!(uid),
                   ),
                 if (showDiet) ...[
                   IconButton(
                     icon: const Icon(Icons.history, color: Colors.teal),
-                    tooltip: "Storico Diete (Secure)",
-                    onPressed: () => widget.onHistory(data['uid']),
+                    onPressed: () => widget.onHistory(uid),
                   ),
                   IconButton(
                     icon: const Icon(Icons.upload_file, color: Colors.blueGrey),
-                    tooltip: "Carica Dieta",
-                    onPressed: () => widget.onUploadDiet(data['uid']),
+                    onPressed: () => widget.onUploadDiet(uid),
                   ),
                 ],
                 if (showParser)
@@ -1222,31 +1202,28 @@ class _UserCardState extends State<_UserCard> {
                       Icons.settings_applications,
                       color: Colors.orange,
                     ),
-                    tooltip: "Configura Parser",
-                    onPressed: () => widget.onUploadParser(data['uid']),
+                    onPressed: () => widget.onUploadParser(uid),
                   ),
                 if (canEdit)
                   IconButton(
                     icon: const Icon(Icons.edit, color: Colors.indigo),
-                    tooltip: "Modifica",
                     onPressed: () => widget.onEdit(
-                      data['uid'],
+                      uid,
                       realEmail,
-                      realFirstName,
-                      realLastName,
+                      data['first_name'] ?? '',
+                      data['last_name'] ?? '',
                     ),
                   ),
                 if (canDelete)
                   IconButton(
                     icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    tooltip: "Elimina",
-                    onPressed: () => widget.onDelete(data['uid']),
+                    onPressed: () => widget.onDelete(uid),
                   ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
-              "Creato il: $date",
+              "Creato il: $dateStr",
               style: TextStyle(fontSize: 10, color: Colors.grey[400]),
             ),
           ],
@@ -1256,13 +1233,10 @@ class _UserCardState extends State<_UserCard> {
   }
 }
 
-// [MODIFICATO] Usa la chiamata sicura invece di Firestore diretto
 class _UserHistoryScreen extends StatefulWidget {
   final String targetUid;
   final String userName;
-
   const _UserHistoryScreen({required this.targetUid, required this.userName});
-
   @override
   State<_UserHistoryScreen> createState() => _UserHistoryScreenState();
 }
@@ -1277,6 +1251,7 @@ class _UserHistoryScreenState extends State<_UserHistoryScreen> {
     _historyFuture = _repo.getSecureUserHistory(widget.targetUid);
   }
 
+  // UPDATED: Usa l'API sicura per cancellare
   void _deleteDiet(BuildContext context, String dietId) async {
     bool confirm =
         await showDialog(
@@ -1301,27 +1276,20 @@ class _UserHistoryScreenState extends State<_UserHistoryScreen> {
 
     if (confirm) {
       try {
-        // Poiché usiamo l'API, dobbiamo ricostruire il riferimento o usare una call API.
-        // Se le Rules lo permettono, l'admin può cancellare direttamente.
-        await FirebaseFirestore.instance
-            .collection('diet_history')
-            .doc(dietId)
-            .delete();
-
+        await _repo.deleteDiet(dietId); // <--- API CALL
         if (context.mounted) {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text("Dieta eliminata")));
-          // Ricarica la lista
-          setState(() {
-            _historyFuture = _repo.getSecureUserHistory(widget.targetUid);
-          });
+          setState(
+            () => _historyFuture = _repo.getSecureUserHistory(widget.targetUid),
+          );
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Errore: $e"), backgroundColor: Colors.red),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("Errore: $e")));
         }
       }
     }
@@ -1346,13 +1314,9 @@ class _UserHistoryScreenState extends State<_UserHistoryScreen> {
           }
           if (snapshot.hasError) {
             return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  "Errore Audit Log: ${snapshot.error}",
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.red),
-                ),
+              child: Text(
+                "Errore Audit Log: ${snapshot.error}",
+                style: const TextStyle(color: Colors.red),
               ),
             );
           }
@@ -1367,18 +1331,10 @@ class _UserHistoryScreenState extends State<_UserHistoryScreen> {
             separatorBuilder: (_, _) => const Divider(),
             itemBuilder: (ctx, i) {
               final data = list[i] as Map<String, dynamic>;
-              DateTime date;
-              try {
-                date = DateTime.parse(data['uploadedAt']);
-              } catch (_) {
-                date = DateTime.now();
-              }
-
+              DateTime date =
+                  DateTime.tryParse(data['uploadedAt'] ?? '') ?? DateTime.now();
               return ListTile(
-                leading: const Icon(
-                  Icons.lock_clock, // Icona diversa per indicare Secure
-                  color: Colors.indigo,
-                ),
+                leading: const Icon(Icons.lock_clock, color: Colors.indigo),
                 title: Text(data['fileName'] ?? "Dieta Protetta"),
                 subtitle: Text(
                   "Caricato il: ${DateFormat('dd MMM yyyy HH:mm').format(date)}",
@@ -1388,12 +1344,10 @@ class _UserHistoryScreenState extends State<_UserHistoryScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.visibility, color: Colors.green),
-                      tooltip: "Visualizza Dettagli",
                       onPressed: () => _viewDiet(context, data),
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
-                      tooltip: "Elimina",
                       onPressed: () => _deleteDiet(context, data['id']),
                     ),
                   ],
@@ -1409,7 +1363,6 @@ class _UserHistoryScreenState extends State<_UserHistoryScreen> {
 
 class _DietDetailScreen extends StatelessWidget {
   final Map<String, dynamic> data;
-
   const _DietDetailScreen({required this.data});
 
   @override
@@ -1423,17 +1376,17 @@ class _DietDetailScreen extends StatelessWidget {
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.security, size: 64, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  const Text(
+                children: const [
+                  Icon(Icons.security, size: 64, color: Colors.grey),
+                  SizedBox(height: 16),
+                  Text(
                     "Contenuto Protetto",
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.all(16.0),
                     child: Text(
-                      "Il contenuto del piano alimentare è stato rimosso per privacy durante l'audit dell'amministratore.",
+                      "Il contenuto non è disponibile o è stato rimosso.",
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -1465,13 +1418,13 @@ class _DietDetailScreen extends StatelessWidget {
                         ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: dishes.map((d) {
-                            final name = d['name'] ?? '-';
-                            final qty = d['qty']?.toString() ?? '';
-                            return Text(
-                              "• $name ${qty.isNotEmpty ? '($qty)' : ''}",
-                            );
-                          }).toList(),
+                          children: dishes
+                              .map(
+                                (d) => Text(
+                                  "• ${d['name'] ?? '-'} ${d['qty'] ?? ''}",
+                                ),
+                              )
+                              .toList(),
                         ),
                       );
                     }).toList(),
@@ -1483,162 +1436,13 @@ class _DietDetailScreen extends StatelessWidget {
   }
 }
 
-class _ParserConfigScreen extends StatefulWidget {
+class _ParserConfigScreen extends StatelessWidget {
   final String targetUid;
   const _ParserConfigScreen({required this.targetUid});
   @override
-  State<_ParserConfigScreen> createState() => _ParserConfigScreenState();
-}
-
-class _ParserConfigScreenState extends State<_ParserConfigScreen> {
-  final AdminRepository _repo = AdminRepository();
-  bool _isLoading = false;
-
-  Future<void> _uploadNew() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['txt'],
-    );
-    if (result != null && result.files.single.bytes != null) {
-      setState(() => _isLoading = true);
-      try {
-        await _repo.uploadParserConfig(widget.targetUid, result.files.single);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Configurazione aggiornata!")),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Errore: $e"), backgroundColor: Colors.red),
-          );
-        }
-      } finally {
-        if (mounted) setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Configurazione Parser")),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.upload),
-                label: const Text("Carica Nuova Configurazione (.txt)"),
-                onPressed: _isLoading ? null : () => _uploadNew(),
-              ),
-            ),
-          ),
-          if (_isLoading) const LinearProgressIndicator(),
-          const Divider(),
-          Expanded(
-            child: StreamBuilder<DocumentSnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(widget.targetUid)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final user = snapshot.data!.data() as Map<String, dynamic>;
-                final current = user['custom_parser_prompt'] as String?;
-
-                return DefaultTabController(
-                  length: 2,
-                  child: Column(
-                    children: [
-                      const TabBar(
-                        tabs: [
-                          Tab(text: "Attuale"),
-                          Tab(text: "Cronologia"),
-                        ],
-                      ),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            SingleChildScrollView(
-                              padding: const EdgeInsets.all(16),
-                              child: Text(
-                                current ??
-                                    "Nessuna configurazione personalizzata attiva (usa default).",
-                              ),
-                            ),
-                            StreamBuilder<QuerySnapshot>(
-                              stream: FirebaseFirestore.instance
-                                  .collection('users')
-                                  .doc(widget.targetUid)
-                                  .collection('parser_history')
-                                  .orderBy('uploaded_at', descending: true)
-                                  .snapshots(),
-                              builder: (ctx, histSnap) {
-                                if (!histSnap.hasData) {
-                                  return const Center(
-                                    child: CircularProgressIndicator(),
-                                  );
-                                }
-                                final docs = histSnap.data!.docs;
-                                if (docs.isEmpty) {
-                                  return const Center(
-                                    child: Text("Nessuna cronologia."),
-                                  );
-                                }
-                                return ListView.separated(
-                                  itemCount: docs.length,
-                                  separatorBuilder: (_, _) => const Divider(),
-                                  itemBuilder: (c, i) {
-                                    final h =
-                                        docs[i].data() as Map<String, dynamic>;
-                                    final date =
-                                        (h['uploaded_at'] as Timestamp?)
-                                            ?.toDate() ??
-                                        DateTime.now();
-                                    return ListTile(
-                                      title: Text(
-                                        DateFormat(
-                                          'dd MMM yyyy HH:mm',
-                                        ).format(date),
-                                      ),
-                                      subtitle: Text(
-                                        "${(h['content'] as String).substring(0, 50)}...",
-                                      ),
-                                      onTap: () {
-                                        showDialog(
-                                          context: context,
-                                          builder: (_) => AlertDialog(
-                                            title: const Text(
-                                              "Dettaglio Config",
-                                            ),
-                                            content: SingleChildScrollView(
-                                              child: Text(h['content']),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    );
-                                  },
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text("Config Parser Placeholder")),
     );
   }
 }

@@ -23,7 +23,7 @@ from pydantic import Json, BaseModel
 from app.services.diet_service import DietParser
 from app.services.receipt_service import ReceiptScanner
 from app.services.notification_service import NotificationService
-from app.services.normalization import normalize_meal_name
+from app.services.normalization import normalize_meal_name, normalize_quantity
 from app.core.config import settings
 from app.models.schemas import DietResponse, Dish, Ingredient, SubstitutionGroup, SubstitutionOption
 from app.broadcast import broadcast_message 
@@ -599,27 +599,69 @@ async def cancel_maintenance_schedule(requester: dict = Depends(verify_admin)):
     
 def _convert_to_app_format(gemini_output) -> DietResponse:
     if not gemini_output: return DietResponse(plan={}, substitutions={})
-    app_plan, app_substitutions, cad_map = {}, {}, {}
+    app_plan, app_substitutions = {}, {}
+    cad_map = {}
+    
+    # 1. Mappatura Sostituzioni
     for g in gemini_output.get('tabella_sostituzioni', []):
         if g.get('cad_code', 0) > 0:
             cad_map[g.get('titolo', '').strip().lower()] = g['cad_code']
-            app_substitutions[str(g['cad_code'])] = SubstitutionGroup(name=g.get('titolo', ''), options=[SubstitutionOption(name=o.get('nome',''), qty=o.get('quantita','')) for o in g.get('opzioni',[])])
+            
+            # Normalizziamo anche le opzioni delle sostituzioni
+            clean_options = []
+            for o in g.get('opzioni',[]):
+                raw_qty = o.get('quantita','')
+                clean_qty = normalize_quantity(raw_qty) # <--- NORMALIZZAZIONE QUI
+                clean_options.append(SubstitutionOption(name=o.get('nome',''), qty=clean_qty))
+
+            app_substitutions[str(g['cad_code'])] = SubstitutionGroup(
+                name=g.get('titolo', ''),
+                options=clean_options
+            )
+
     day_map = {"lun": "Lunedì", "mar": "Martedì", "mer": "Mercoledì", "gio": "Giovedì", "ven": "Venerdì", "sab": "Sabato", "dom": "Domenica"}
+    
+    # 2. Costruzione Piano
     for day in gemini_output.get('piano_settimanale', []):
         raw_name = day.get('giorno', '').lower().strip()
         day_name = day_map.get(raw_name[:3], raw_name.capitalize())
         app_plan[day_name] = {}
+        
         for meal in day.get('pasti', []):
             m_name = normalize_meal_name(meal.get('tipo_pasto', ''))
             dishes = []
             for d in meal.get('elenco_piatti', []):
                 d_name = d.get('nome_piatto') or 'Piatto'
-                new_dish = Dish(instance_id=str(uuid.uuid4()), name=d_name, qty=str(d.get('quantita_totale') or ''), cad_code=d.get('cad_code', 0) or cad_map.get(d_name.lower(), 0), is_composed=(d.get('tipo') == 'composto'), ingredients=[Ingredient(name=str(i.get('nome','')), qty=str(i.get('quantita',''))) for i in d.get('ingredienti', [])])
+                
+                # Normalizziamo la quantità totale del piatto
+                raw_dish_qty = str(d.get('quantita_totale') or '')
+                clean_dish_qty = normalize_quantity(raw_dish_qty) # <--- NORMALIZZAZIONE QUI
+
+                # Normalizziamo gli ingredienti
+                clean_ingredients = []
+                for i in d.get('ingredienti', []):
+                    raw_ing_qty = str(i.get('quantita',''))
+                    clean_ing_qty = normalize_quantity(raw_ing_qty) # <--- NORMALIZZAZIONE QUI
+                    clean_ingredients.append(Ingredient(name=str(i.get('nome','')), qty=clean_ing_qty))
+
+                new_dish = Dish(
+                    instance_id=str(uuid.uuid4()),
+                    name=d_name,
+                    qty=clean_dish_qty,
+                    cad_code=d.get('cad_code', 0) or cad_map.get(d_name.lower(), 0),
+                    is_composed=(d.get('tipo') == 'composto'),
+                    ingredients=clean_ingredients
+                )
                 dishes.append(new_dish)
-            if m_name in app_plan[day_name]: app_plan[day_name][m_name].extend(dishes)
-            else: app_plan[day_name][m_name] = dishes
+
+            if m_name in app_plan[day_name]: 
+                app_plan[day_name][m_name].extend(dishes)
+            else: 
+                app_plan[day_name][m_name] = dishes
+
     for d, meals in app_plan.items():
         app_plan[d] = {k: meals[k] for k in MEAL_ORDER if k in meals}
         for k in meals: 
             if k not in app_plan[d]: app_plan[d][k] = meals[k]
+
     return DietResponse(plan=app_plan, substitutions=app_substitutions)

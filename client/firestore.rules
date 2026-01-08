@@ -1,81 +1,55 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // --- HELPER FUNCTIONS ---
     
-    function isSignedIn() {
-      return request.auth != null;
-    }
-    
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function hasRole(roleName) { return isSignedIn() && request.auth.token.role == roleName; }
 
-    // Check Ruolo tramite Custom Claims (Token)
-    function hasRole(roleName) {
-      return isSignedIn() && 
-             request.auth.token.role == roleName;
-    }
-
-    // Check Relazionale (Nutrizionista Assegnato)
-    function isAssignedNutritionist(targetUid) {
-       return hasRole('nutritionist') && (
-          get(/databases/$(database)/documents/users/$(targetUid)).data.created_by == request.auth.uid || 
-          get(/databases/$(database)/documents/users/$(targetUid)).data.nutritionist_id == request.auth.uid
-       );
-    }
-
-    // --- RULES ---
-
-    // 1. Configurazione Globale
     match /config/global {
       allow read: if true;
       allow write: if hasRole('admin');
     }
 
-    // 2. Utenti (Profilo Anagrafico)
     match /users/{userId} {
-      allow read: if isOwner(userId) || hasRole('admin') || isAssignedNutritionist(userId);
-      allow create: if isSignedIn();
-      allow update: if isOwner(userId) || hasRole('admin') || isAssignedNutritionist(userId);
-      allow delete: if hasRole('admin');
-
-      // A. DIETA ATTIVA (Dati Sanitari)
-      match /diets/{dietId} {
-        allow read: if isOwner(userId) || isAssignedNutritionist(userId);
-        allow write: if isAssignedNutritionist(userId) || isOwner(userId);
-      }
+      // READ: Proprietario, Admin, o Nutrizionista Assegnato
+      allow read: if isOwner(userId) || hasRole('admin') || 
+                  (hasRole('nutritionist') && (resource.data.parent_id == request.auth.uid || resource.data.created_by == request.auth.uid));
       
-      // B. STORICO LOCALE (Sync)
-      match /history/{docId} {
-        allow read: if isOwner(userId) || isAssignedNutritionist(userId);
-        allow write: if isOwner(userId);
-      }
+      // WRITE: Create (chiunque), Update (proprietario/admin/nutrizionista)
+      allow create: if isSignedIn();
+      allow update: if isOwner(userId) || hasRole('admin') || 
+                   (hasRole('nutritionist') && (resource.data.parent_id == request.auth.uid || resource.data.created_by == request.auth.uid));
+      
+      // DELETE: Admin O Nutrizionista Assegnato
+      allow delete: if hasRole('admin') || 
+                   (hasRole('nutritionist') && (resource.data.parent_id == request.auth.uid || resource.data.created_by == request.auth.uid));
 
-      // C. PARSER HISTORY (Dati Tecnici - Nuovo)
+      match /diets/{dietId} {
+        allow read, write: if isOwner(userId) || 
+                           (hasRole('nutritionist') && (get(/databases/$(database)/documents/users/$(userId)).data.parent_id == request.auth.uid));
+      }
+      match /history/{docId} {
+        allow read, write: if isOwner(userId) || 
+                           (hasRole('nutritionist') && (get(/databases/$(database)/documents/users/$(userId)).data.parent_id == request.auth.uid));
+      }
       match /parser_history/{docId} {
         allow read, write: if hasRole('admin');
       }
     }
 
-    // 3. Archivio PDF Globale (Diet History)
     match /diet_history/{docId} {
-      allow read: if isOwner(resource.data.userId) || isAssignedNutritionist(resource.data.userId) || hasRole('admin');
-      allow create: if isAssignedNutritionist(request.resource.data.userId) || hasRole('admin');
+      allow read: if isOwner(resource.data.userId) || hasRole('admin') || (hasRole('nutritionist') && resource.data.uploadedBy == request.auth.uid);
+      allow create: if hasRole('nutritionist') || hasRole('admin');
       allow delete: if hasRole('admin'); 
     }
     
-    // 4. Access Logs (Audit) - SOLO LETTURA ADMIN
-    // La scrittura è permessa solo al Backend SDK (che bypassa le regole)
     match /access_logs/{logId} {
        allow read: if hasRole('admin');
-       allow create: if false;
+       allow create: if false; 
        allow update, delete: if false; 
     }
 
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /{document=**} { allow read, write: if false; }
   }
 }

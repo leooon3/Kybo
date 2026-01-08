@@ -5,6 +5,7 @@ import '../widgets/meal_card.dart';
 import '../models/active_swap.dart';
 import '../models/pantry_item.dart';
 import '../core/error_handler.dart';
+import '../logic/diet_calculator.dart';
 
 class DietView extends StatelessWidget {
   final String day;
