@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/firestore_service.dart';
 import '../providers/diet_provider.dart';
-import '../core/error_handler.dart';
+import '../core/error_handler.dart'; // [IMPORTANTE]
 
 class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
@@ -21,6 +21,7 @@ class HistoryScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
+            // [UX] Errore tradotto
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(20),
@@ -59,15 +60,10 @@ class HistoryScreen extends StatelessWidget {
           return ListView.builder(
             itemCount: diets.length,
             itemBuilder: (context, index) {
-              final diet = diets[index]; // <--- Qui la chiami 'diet'
+              final diet = diets[index];
               DateTime date = DateTime.now();
               if (diet['uploadedAt'] != null) {
-                // Gestione sicura del timestamp Firestore
-                try {
-                  date = (diet['uploadedAt'] as dynamic).toDate();
-                } catch (_) {
-                  // Fallback se non è un Timestamp
-                }
+                date = (diet['uploadedAt'] as dynamic).toDate();
               }
               final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(date);
 
@@ -108,13 +104,11 @@ class HistoryScreen extends StatelessWidget {
                           ),
                           FilledButton(
                             onPressed: () {
-                              // [FIX COMPLETO] Qui usiamo 'diet' invece di 'historyItem'
                               context.read<DietProvider>().loadHistoricalDiet(
                                 diet,
                               );
-                              Navigator.pop(c); // Chiude dialog
-                              Navigator.pop(context); // Torna indietro
-
+                              Navigator.pop(c);
+                              Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text(

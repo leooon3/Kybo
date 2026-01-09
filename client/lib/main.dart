@@ -1,32 +1,25 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:kybo/repositories/diet_repository.dart';
-import 'package:kybo/services/auth_service.dart';
-import 'package:kybo/services/firestore_service.dart';
-import 'package:kybo/services/storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'core/env.dart';
-import 'core/di/locator.dart'; // <--- IMPORTANTE
 import 'firebase_options_dev.dart' as dev;
 import 'firebase_options_prod.dart' as prod;
+import 'repositories/diet_repository.dart';
 import 'providers/diet_provider.dart';
 import 'screens/splash_screen.dart';
 import 'guards/password_guard.dart';
 import 'services/notification_service.dart';
 import 'constants.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
-import 'l10n/generated/app_localizations.dart';
 
 void main() {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
 
-      // 1. Env & Service Locator
+      // 1. Env
       await Env.init();
-      setupLocator(); // <--- INIZIALIZZA I SERVIZI QUI
 
       // 2. Init Firebase
       try {
@@ -38,6 +31,7 @@ void main() {
           await Firebase.initializeApp(options: firebaseOptions);
         }
 
+        // [IMPORTANTE] Abilita la persistenza offline di Firestore subito
         FirebaseFirestore.instance.settings = const Settings(
           persistenceEnabled: true,
           cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
@@ -46,30 +40,24 @@ void main() {
         debugPrint("⚠️ Firebase Init Error: $e");
       }
 
-      // 3. Avvio UI con Injection
+      // 3. Avvio UI Immediato
       runApp(
         MultiProvider(
           providers: [
-            // Ora DietProvider riceve le dipendenze dal Locator (getIt)
-            // Non creiamo più DietRepository 'volante' qui dentro
+            Provider(create: (_) => DietRepository()),
             ChangeNotifierProvider<DietProvider>(
-              create: (_) => DietProvider(
-                repository: getIt<DietRepository>(),
-                storage: getIt<StorageService>(),
-                firestore: getIt<FirestoreService>(),
-                auth: getIt<AuthService>(),
-              ),
+              create: (context) => DietProvider(context.read<DietRepository>()),
             ),
           ],
           child: const DietApp(),
         ),
       );
 
-      // 4. Avvio Notifiche
+      // 4. Avvio Notifiche "Lazy" (Non blocca l'app)
+      // Non aspettiamo il risultato, lo lasciamo andare in background
       Future.delayed(const Duration(seconds: 3), () {
         if (Firebase.apps.isNotEmpty) {
-          // Usiamo l'istanza singleton, non una nuova
-          getIt<NotificationService>().init();
+          NotificationService().init();
         }
       });
     },
@@ -86,16 +74,6 @@ class DietApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Kybo',
-      localizationsDelegates: const [
-        AppLocalizations.delegate, // <-- Il tuo delegato
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      supportedLocales: const [
-        Locale('it'), // Italiano
-        // Locale('en'), // Inglese (quando farai il file app_en.arb)
-      ],
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -106,6 +84,7 @@ class DietApp extends StatelessWidget {
           surface: AppColors.surface,
         ),
       ),
+      // Qui usiamo il MaintenanceGuard basato su Firestore
       builder: (context, child) {
         return MaintenanceGuard(child: PasswordGuard(child: child!));
       },

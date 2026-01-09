@@ -6,69 +6,29 @@ import '../models/pantry_item.dart';
 import '../models/active_swap.dart';
 
 class StorageService {
-  // Configurazione per la massima sicurezza su Android e iOS
-  final _secureStorage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(
-      encryptedSharedPreferences:
-          true, // Usa il chip di sicurezza hardware se disponibile
-    ),
-    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-  );
-
-  // --- SENSITIVE DATA (Secure Storage + Migration Logic) ---
+  final _storage = const FlutterSecureStorage();
 
   Future<Map<String, dynamic>?> loadDiet() async {
     try {
-      // 1. Prova a leggere dallo storage cifrato
-      String? jsonString = await _secureStorage.read(key: 'diet_plan');
-
-      // 2. MIGRATION CHECK: Se non c'è, controlla se esiste nella vecchia versione (in chiaro)
-      if (jsonString == null) {
-        final prefs = await SharedPreferences.getInstance();
-        if (prefs.containsKey('diet_plan')) {
-          debugPrint("🔐 Migrazione Dieta: Spostamento in Secure Storage...");
-          jsonString = prefs.getString('diet_plan');
-
-          // Migra e pulisci
-          if (jsonString != null) {
-            await _secureStorage.write(key: 'diet_plan', value: jsonString);
-            await prefs.remove('diet_plan');
-          }
-        }
-      }
-
+      final prefs = await SharedPreferences.getInstance();
+      String? jsonString = prefs.getString('diet_plan');
       if (jsonString == null) return null;
       return jsonDecode(jsonString);
     } catch (e) {
-      debugPrint("⚠️ Errore caricamento dieta: $e");
+      debugPrint("⚠️ Errore caricamento dieta (corrotta?): $e");
       return null;
     }
   }
 
   Future<void> saveDiet(Map<String, dynamic> dietData) async {
-    await _secureStorage.write(key: 'diet_plan', value: jsonEncode(dietData));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('diet_plan', jsonEncode(dietData));
   }
 
   Future<List<PantryItem>> loadPantry() async {
     try {
-      // 1. Secure Read
-      String? jsonString = await _secureStorage.read(key: 'pantry');
-
-      // 2. Migration Check
-      if (jsonString == null) {
-        final prefs = await SharedPreferences.getInstance();
-        if (prefs.containsKey('pantry')) {
-          debugPrint(
-            "🔐 Migrazione Dispensa: Spostamento in Secure Storage...",
-          );
-          jsonString = prefs.getString('pantry');
-          if (jsonString != null) {
-            await _secureStorage.write(key: 'pantry', value: jsonString);
-            await prefs.remove('pantry');
-          }
-        }
-      }
-
+      final prefs = await SharedPreferences.getInstance();
+      String? jsonString = prefs.getString('pantry');
       if (jsonString == null) return [];
       List<dynamic> list = jsonDecode(jsonString);
       return list.map((e) => PantryItem.fromJson(e)).toList();
@@ -79,30 +39,17 @@ class StorageService {
   }
 
   Future<void> savePantry(List<PantryItem> items) async {
-    await _secureStorage.write(
-      key: 'pantry',
-      value: jsonEncode(items.map((e) => e.toJson()).toList()),
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'pantry',
+      jsonEncode(items.map((e) => e.toJson()).toList()),
     );
   }
 
   Future<Map<String, ActiveSwap>> loadSwaps() async {
     try {
-      // 1. Secure Read
-      String? jsonString = await _secureStorage.read(key: 'active_swaps');
-
-      // 2. Migration Check
-      if (jsonString == null) {
-        final prefs = await SharedPreferences.getInstance();
-        if (prefs.containsKey('active_swaps')) {
-          debugPrint("🔐 Migrazione Swaps: Spostamento in Secure Storage...");
-          jsonString = prefs.getString('active_swaps');
-          if (jsonString != null) {
-            await _secureStorage.write(key: 'active_swaps', value: jsonString);
-            await prefs.remove('active_swaps');
-          }
-        }
-      }
-
+      final prefs = await SharedPreferences.getInstance();
+      String? jsonString = prefs.getString('active_swaps');
       if (jsonString == null) return {};
       Map<String, dynamic> jsonMap = jsonDecode(jsonString);
       return jsonMap.map(
@@ -114,11 +61,10 @@ class StorageService {
   }
 
   Future<void> saveSwaps(Map<String, ActiveSwap> swaps) async {
+    final prefs = await SharedPreferences.getInstance();
     final jsonMap = swaps.map((key, value) => MapEntry(key, value.toJson()));
-    await _secureStorage.write(key: 'active_swaps', value: jsonEncode(jsonMap));
+    await prefs.setString('active_swaps', jsonEncode(jsonMap));
   }
-
-  // --- NON-SENSITIVE DATA (SharedPreferences - Performance Focus) ---
 
   Future<List<Map<String, dynamic>>> loadAlarms() async {
     try {
@@ -137,6 +83,12 @@ class StorageService {
     await prefs.setString('custom_alarms', jsonEncode(alarms));
   }
 
+  Future<void> clearAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    await _storage.deleteAll();
+  }
+
   Future<Map<String, double>> loadConversions() async {
     final prefs = await SharedPreferences.getInstance();
     final String? raw = prefs.getString('custom_conversions');
@@ -152,13 +104,5 @@ class StorageService {
   Future<void> saveConversions(Map<String, double> conversions) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('custom_conversions', jsonEncode(conversions));
-  }
-
-  // --- CLEANUP ---
-
-  Future<void> clearAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear(); // Pulisce le config
-    await _secureStorage.deleteAll(); // Pulisce i dati sensibili
   }
 }

@@ -23,7 +23,7 @@ android {
 
     defaultConfig {
         applicationId = "it.kybo.app"
-        minSdk = flutter.minSdkVersion  // <--- MODIFICA QUI: Forza 23 per encryptedSharedPreferences
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
