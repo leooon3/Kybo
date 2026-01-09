@@ -29,7 +29,7 @@ class _SplashScreenState extends State<SplashScreen> {
     if (user != null) {
       Navigator.of(
         context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
     } else {
       Navigator.of(
         context,

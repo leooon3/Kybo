@@ -1,0 +1,14 @@
+{
+    "appTitle": "Kybo",
+    "maintenanceTitle": "Manutenzione",
+    "maintenanceDefaultMessage": "Sistema in aggiornamento.",
+    "errorGeneric": "Si è verificato un errore.",
+    "errorLoadDiet": "Impossibile caricare la dieta.",
+    "errorCloudSync": "Errore sincronizzazione Cloud.",
+    "shoppingListTitle": "Lista Spesa",
+    "scanReceiptTitle": "Scansiona Scontrino",
+    "settingsTitle": "Impostazioni",
+    "btnRetry": "Riprova",
+    "btnLogin": "Accedi",
+    "msgWelcome": "Benvenuto in Kybo"
+}

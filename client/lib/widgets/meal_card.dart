@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
 import '../constants.dart';
+import '../models/diet_models.dart'; // Importa i nuovi modelli
 import '../models/active_swap.dart';
 
 class MealCard extends StatelessWidget {
   final String day;
   final String mealName;
-  final List<dynamic> foods;
+  final List<Dish> foods; // <-- ORA USIAMO I MODELLI FORTI
   final Map<String, ActiveSwap> activeSwaps;
   final Map<String, bool> availabilityMap;
   final bool isTranquilMode;
   final bool isToday;
-  final Function(int) onEat;
-  final Function(String, int) onSwap;
-  final Function(int, String, String) onEdit;
+
+  // Callback aggiornate
+  final Function(int dishIndex) onEat;
+  final Function(String swapKey, int cadCode) onSwap;
 
   const MealCard({
     super.key,
@@ -25,7 +27,6 @@ class MealCard extends StatelessWidget {
     required this.isToday,
     required this.onEat,
     required this.onSwap,
-    required this.onEdit,
   });
 
   // Lista di alimenti "rilassabili" (Frutta e Verdura)
@@ -93,8 +94,8 @@ class MealCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    bool allConsumed =
-        foods.isNotEmpty && foods.every((f) => f['consumed'] == true);
+    // Controllo su proprietà oggetto, non mappa
+    bool allConsumed = foods.isNotEmpty && foods.every((f) => f.isConsumed);
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -163,41 +164,47 @@ class MealCard extends StatelessWidget {
                     // Lista Piatti
                     Column(
                       children: List.generate(foods.length, (index) {
-                        final originalFood = foods[index];
-                        final int cadCode = originalFood['cad_code'] ?? 0;
+                        final Dish originalDish = foods[index];
+                        final int cadCode = originalDish.cadCode;
+
+                        // KEY GENERATION: Coerente con DietEngine
                         final String swapKey = "${day}_${mealName}_$cadCode";
 
-                        // --- LOGICA SWAP (NUOVA) ---
                         final bool isSwapped = activeSwaps.containsKey(swapKey);
                         final activeSwap = isSwapped
                             ? activeSwaps[swapKey]
                             : null;
 
-                        // Se c'è uno swap, usiamo i suoi dati, altrimenti quelli originali
+                        // Visualizzazione Nome
                         final String displayName = isSwapped
                             ? activeSwap!.name
-                            : originalFood['name'].toString();
+                            : originalDish.name;
 
+                        // Visualizzazione Quantità
                         final String displayQtyRaw = isSwapped
                             ? "${activeSwap!.qty} ${activeSwap.unit}"
-                            : "${originalFood['qty'] ?? ''} ${originalFood['unit'] ?? ''}";
+                            : "${originalDish.qty} ${originalDish.rawUnit}";
 
-                        final bool isConsumed =
-                            originalFood['consumed'] == true;
+                        // Stato consumato dall'oggetto
+                        final bool isConsumed = originalDish.isConsumed;
 
+                        // Disponibilità dispensa (chiave UI legacy basata su indici)
                         String availKey = "${day}_${mealName}_$index";
-                        bool isAvailable = availabilityMap[availKey] ?? true;
+                        bool isAvailable =
+                            availabilityMap[availKey] ??
+                            false; // Default safe su false
 
-                        // Ingredienti: Se scambiato, non mostriamo quelli vecchi
-                        // (o potremmo mostrare quelli nuovi se 'swappedIngredients' fosse popolato)
-                        final List<dynamic>? ingredients = isSwapped
-                            ? null // Nascondi ingredienti originali se scambiato
-                            : originalFood['ingredients'];
+                        // Ingredienti
+                        // Se è swappato, l'ActiveSwap non ha ancora lista tipizzata ingredienti nella UI
+                        // (dovrebbe averla nel modello ActiveSwap, ma qui semplifichiamo)
+                        // Se non è swappato, usiamo lista tipizzata Dish.ingredients
+                        final List<Ingredient> ingredients = isSwapped
+                            ? [] // Non mostriamo ingr dello swap per ora
+                            : originalDish.ingredients;
 
-                        final bool hasIngredients =
-                            ingredients != null && ingredients.isNotEmpty;
+                        final bool hasIngredients = ingredients.isNotEmpty;
 
-                        // Logica Relax
+                        // Logica Relax (Tranquil Mode)
                         final String nameLower = displayName.toLowerCase();
                         bool isRelaxableItem = _relaxableFoods.any(
                           (tag) => nameLower.contains(tag),
@@ -212,7 +219,6 @@ class MealCard extends StatelessWidget {
 
                         return Container(
                           decoration: BoxDecoration(
-                            // Evidenzia leggermente lo sfondo se è uno swap
                             color: isSwapped
                                 ? Colors.orange.withValues(alpha: 0.05)
                                 : null,
@@ -259,7 +265,6 @@ class MealCard extends StatelessWidget {
                                     children: [
                                       Row(
                                         children: [
-                                          // Se scambiato, mostra iconcina piccola
                                           if (isSwapped)
                                             const Padding(
                                               padding: EdgeInsets.only(
@@ -298,13 +303,15 @@ class MealCard extends StatelessWidget {
 
                                       if (hasIngredients)
                                         ...ingredients.map((ing) {
-                                          String iName = ing['name'].toString();
-                                          String iQty = ing['qty'].toString();
+                                          String iName = ing.name;
+                                          String iQty =
+                                              "${ing.qty} ${ing.rawUnit}";
                                           bool iRelax = _relaxableFoods.any(
                                             (tag) => iName
                                                 .toLowerCase()
                                                 .contains(tag),
                                           );
+
                                           if (isTranquilMode && iRelax) {
                                             iQty = "";
                                           }
@@ -344,11 +351,10 @@ class MealCard extends StatelessWidget {
 
                                 // Azioni
                                 if (!isConsumed) ...[
-                                  // Swap
+                                  // Swap Button (solo se ha cadCode valido)
                                   if (cadCode > 0)
                                     IconButton(
                                       icon: Icon(
-                                        // Icona piena se già scambiato
                                         isSwapped
                                             ? Icons.swap_horiz
                                             : Icons.swap_horiz_outlined,
@@ -364,7 +370,7 @@ class MealCard extends StatelessWidget {
                                       onPressed: () => onSwap(swapKey, cadCode),
                                     ),
 
-                                  // Consuma
+                                  // Consuma Button (solo oggi)
                                   if (isToday)
                                     Padding(
                                       padding: const EdgeInsets.only(left: 4),
