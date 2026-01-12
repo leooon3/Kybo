@@ -54,3 +54,5 @@ lib/firebase_options_dev.dart
 
 dart_dev_base64.txt
 dart_prod_base64.txt
+env_dev_base64.txt
+env_prod_base64.txt
