@@ -49,12 +49,20 @@ jobs:
              echo "${{ secrets.IOS_FIREBASE_CONFIG_DEV }}" | base64 --decode > ios/Runner/GoogleService-Info.plist
           fi
 
-      # 4. BUILD IOS (No Codesign)
-      # Compiliamo in release mode ma senza firma (ci pensa Sideloadly)
-      # Passiamo anche le variabili d'ambiente per il codice Dart (es. Env.apiUrl)
+      # 4. BUILD IOS (No Codesign - Force Manual)
       - name: Build iOS App Bundle
         run: |
-          flutter build ios --release --no-codesign --dart-define=ENV=${{ inputs.environment }}
+          # Impostiamo ENV a 'dev' se l'input è vuoto (es. trigger via push)
+          BUILD_ENV="${{ inputs.environment }}"
+          if [ -z "$BUILD_ENV" ]; then BUILD_ENV="dev"; fi
+
+          echo "Building for environment: $BUILD_ENV"
+
+          flutter build ios --release --no-codesign --dart-define=ENV=$BUILD_ENV -- \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual
 
       # 5. CREAZIONE IPA MANUALE
       # Flutter crea un .app, ma Sideloadly vuole un .ipa.
