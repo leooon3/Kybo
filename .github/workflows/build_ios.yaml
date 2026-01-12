@@ -1,6 +1,8 @@
 name: Build iOS for Sideloadly
 
 on:
+  push:
+    branches: ["main", "dev"]
   workflow_dispatch:
     inputs:
       environment:
