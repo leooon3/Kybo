@@ -55,5 +55,18 @@
         <string>fetch</string>
         <string>processing</string>
     </array>
+	<key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>com.googleusercontent.apps.673588124626-h4mqvba1d8pln9pqki6quvjfomn9k5ff</string>
+            </array>
+        </dict>
+    </array>
+	<key>GIDClientID</key>
+<string>673588124626-h4mqvba1d8pln9pqki6quvjfomn9k5ff.apps.googleusercontent.com</string>
 </dict>
 </plist>
