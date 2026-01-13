@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/cupertino.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'notification_service.dart';
@@ -66,14 +69,33 @@ class InventoryService {
   static Future<void> initialize() async {
     try {
       await Workmanager().initialize(callbackDispatcher);
-      await Workmanager().registerPeriodicTask(
-        "1",
-        taskInventoryCheck,
-        frequency: const Duration(hours: 24),
-        constraints: Constraints(networkType: NetworkType.notRequired),
-      );
+
+      if (Platform.isAndroid) {
+        // --- CONFIGURAZIONE ANDROID ---
+        await Workmanager().registerPeriodicTask(
+          "1", // ID univoco per Android
+          taskInventoryCheck, // Nome della funzione/task
+          frequency: const Duration(hours: 24),
+          constraints: Constraints(
+            // [FIX 1] Usa snake_case per workmanager 0.9.0+
+            networkType: NetworkType.notRequired,
+          ),
+        );
+      } else if (Platform.isIOS) {
+        // --- CONFIGURAZIONE IOS ---
+        // Su iOS non esiste "PeriodicTask" preciso come su Android.
+        // Usiamo OneOffTask che il sistema eseguirà quando possibile.
+        // [FIX 2] L'ID e il Nome DEVONO essere "workmanager.background.task" (come in Info.plist)
+        await Workmanager().registerOneOffTask(
+          "workmanager.background.task", // ID (Match Info.plist)
+          "workmanager.background.task", // Task Name (Match ID)
+          constraints: Constraints(
+            networkType: NetworkType.notRequired,
+          ),
+        );
+      }
     } catch (e) {
-      // Handle error
+      debugPrint("⚠️ Errore inizializzazione Workmanager: $e");
     }
   }
 }

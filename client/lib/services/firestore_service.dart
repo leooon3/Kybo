@@ -6,9 +6,39 @@ class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  Future<void> saveDietToHistory(
+  // [MODIFICATO] Ora accetta anche 'swaps' (le modifiche dell'utente)
+  Future<String> saveDietToHistory(
     Map<String, dynamic> plan,
     Map<String, dynamic> subs,
+    Map<String, dynamic> swaps, // <--- NUOVO PARAMETRO
+  ) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception("Utente non loggato");
+
+      final docRef =
+          await _db.collection('users').doc(user.uid).collection('diets').add({
+        'uploadedAt': FieldValue.serverTimestamp(),
+        'lastUpdated': FieldValue.serverTimestamp(),
+        'plan': plan,
+        'substitutions': subs,
+        'activeSwaps': swaps, // <--- SALVIAMO LE TUE MODIFICHE
+      });
+
+      debugPrint("🆕 Nuova dieta creata con ID: ${docRef.id}");
+      return docRef.id;
+    } catch (e) {
+      debugPrint("⚠️ Errore creazione storico: $e");
+      rethrow;
+    }
+  }
+
+  // [MODIFICATO] Aggiorna anche gli swaps
+  Future<void> updateDietHistory(
+    String docId,
+    Map<String, dynamic> plan,
+    Map<String, dynamic> subs,
+    Map<String, dynamic> swaps, // <--- NUOVO PARAMETRO
   ) async {
     try {
       final user = _auth.currentUser;
@@ -17,22 +47,19 @@ class FirestoreService {
       await _db
           .collection('users')
           .doc(user.uid)
-          .collection('diets') // Allineato col Server Python
-          .doc('current') // ID Stabile: sovrascrive lo stesso file
-          .set(
-            {
-              'lastUpdated':
-                  FieldValue.serverTimestamp(), // Utile per il controllo 3/4h
-              'plan': plan,
-              'substitutions': subs,
-            },
-            SetOptions(merge: true),
-          ); // Merge: non cancella campi extra se ci sono
+          .collection('diets')
+          .doc(docId)
+          .update({
+        'lastUpdated': FieldValue.serverTimestamp(),
+        'plan': plan,
+        'substitutions': subs,
+        'activeSwaps': swaps, // <--- AGGIORNIAMO LE TUE MODIFICHE
+      });
 
-      debugPrint("💾 Dieta salvata nella cronologia cloud.");
+      debugPrint("🔄 Dieta $docId aggiornata su Cloud (con modifiche).");
     } catch (e) {
-      debugPrint("⚠️ Errore salvataggio cronologia: $e");
-      // Non rilanciamo perché non è critico per l'utente immediato
+      debugPrint("⚠️ Errore aggiornamento storico: $e");
+      rethrow;
     }
   }
 

@@ -32,7 +32,7 @@ dependencies:
   # Notifications & Background Tasks
   flutter_local_notifications: ^18.0.1
   timezone: ^0.9.2
-  workmanager: ^0.5.2
+  workmanager: ^0.9.0
   permission_handler: ^11.1.0
 
   # Timezone detection

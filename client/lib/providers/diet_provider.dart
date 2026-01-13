@@ -49,9 +49,67 @@ class DietProvider extends ChangeNotifier {
     // Non chiamiamo notifyListeners() qui per evitare loop di rebuild
   }
 
+  // [NUOVO] Logica di Sync Intelligente
+  Future<String> runSmartSyncCheck({bool forceSync = false}) async {
+    final user = _auth.currentUser;
+    if (user == null || _dietData == null) return "Errore: Dati mancanti.";
+
+    // 1. Controllo Modifiche
+    bool hasSwapsChanged = _activeSwaps.isNotEmpty;
+    bool hasChanges =
+        _hasStructuralChanges(_dietData, _lastSyncedDiet) || hasSwapsChanged;
+
+    if (!hasChanges && !forceSync) {
+      return "✅ Nessuna modifica da salvare.";
+    }
+
+    // 2. Controllo Tempo (3h)
+    final now = DateTime.now();
+    final difference = now.difference(_lastCloudSave);
+
+    if (!forceSync && difference.inHours < 3) {
+      return "⏳ Modifiche in coda (attesa 3h).";
+    }
+
+    // [CORREZIONE] Serializzazione corretta usando la tua classe
+    final Map<String, dynamic> swapsToSave = {};
+    _activeSwaps.forEach((key, value) {
+      swapsToSave[key] = value.toMap(); // Usa il tuo metodo
+    });
+
+    try {
+      if (_currentFirestoreId == null) {
+        // CREAZIONE
+        String newId = await _firestore.saveDietToHistory(
+          _sanitize(_dietData!),
+          _sanitize(_substitutions ?? {}),
+          swapsToSave, // <--- INVIO MAPPA CORRETTA
+        );
+        _currentFirestoreId = newId;
+        _lastCloudSave = now;
+        _lastSyncedDiet = _deepCopy(_dietData);
+        return "🆕 Nuova Dieta Salvata (ID: $newId).";
+      } else {
+        // AGGIORNAMENTO
+        await _firestore.updateDietHistory(
+          _currentFirestoreId!,
+          _sanitize(_dietData!),
+          _sanitize(_substitutions ?? {}),
+          swapsToSave, // <--- INVIO MAPPA CORRETTA
+        );
+        _lastCloudSave = now;
+        _lastSyncedDiet = _deepCopy(_dietData);
+        return "☁️ Dieta Aggiornata con le tue modifiche.";
+      }
+    } catch (e) {
+      return "❌ Errore Sync: $e";
+    }
+  }
+
   // Getters
   Map<String, dynamic>? get dietData => _dietData;
   Map<String, dynamic>? get substitutions => _substitutions;
+  String? _currentFirestoreId;
   List<PantryItem> get pantryItems => _pantryItems;
   Map<String, ActiveSwap> get activeSwaps => _activeSwaps;
   List<String> get shoppingList => _shoppingList;
@@ -134,17 +192,40 @@ class DietProvider extends ChangeNotifier {
     }
   }
 
-  void loadHistoricalDiet(Map<String, dynamic> dietData) {
+  void loadHistoricalDiet(Map<String, dynamic> dietData, String docId) {
+    debugPrint("📂 Caricamento dieta ID: $docId");
+
     _dietData = dietData['plan'];
     _substitutions = dietData['substitutions'];
-    _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
+    _currentFirestoreId = docId;
+
+    // [CORREZIONE] Ripristino usando la tua classe ActiveSwap
     _activeSwaps = {};
-    _storage.saveSwaps({});
 
-    // Reset sync baseline quando carico uno storico
+    if (dietData['activeSwaps'] != null) {
+      try {
+        final rawSwaps = dietData['activeSwaps'] as Map;
+
+        rawSwaps.forEach((key, value) {
+          if (value is Map) {
+            // Qui ricostruiamo l'oggetto usando i tuoi campi (name, qty, unit)
+            // La chiave (es. "Lunedi_Pranzo_0") ci dice dove posizionarlo
+            final swapObj =
+                ActiveSwap.fromMap(Map<String, dynamic>.from(value));
+            _activeSwaps[key.toString()] = swapObj;
+          }
+        });
+        debugPrint("✅ Ripristinati ${_activeSwaps.length} scambi attivi.");
+      } catch (e) {
+        debugPrint("⚠️ Errore critico ripristino swap: $e");
+      }
+    }
+
+    // Persistenza Locale e UI
+    _storage.saveDiet({'plan': _dietData, 'substitutions': _substitutions});
+    _storage.saveSwaps(_activeSwaps);
+
     _lastSyncedDiet = _deepCopy(_dietData);
-    _lastSyncedSubstitutions = _deepCopy(_substitutions);
-
     _recalcAvailability();
     notifyListeners();
   }
@@ -207,11 +288,22 @@ class DietProvider extends ChangeNotifier {
               DateTime.now().difference(_lastCloudSave) > _cloudSaveInterval;
           bool isStructurallyDifferent =
               _hasStructuralChanges(_dietData, _lastSyncedDiet) ||
-              jsonEncode(_substitutions) !=
-                  jsonEncode(_lastSyncedSubstitutions);
+                  jsonEncode(_substitutions) !=
+                      jsonEncode(_lastSyncedSubstitutions);
 
           if (timePassed && isStructurallyDifferent) {
-            await _firestore.saveDietToHistory(_dietData!, _substitutions!);
+            // 1. Convertiamo gli swap attivi in mappa
+            final Map<String, dynamic> currentSwaps = {};
+            _activeSwaps.forEach((key, value) {
+              currentSwaps[key] = value.toMap();
+            });
+
+// 2. Salviamo tutto
+            await _firestore.saveDietToHistory(
+              _sanitize(_dietData!),
+              _sanitize(_substitutions ?? {}),
+              currentSwaps, // <--- TERZO ARGOMENTO: Passiamo gli swap attivi
+            );
             _lastCloudSave = DateTime.now();
             _lastSyncedDiet = _deepCopy(_dietData);
             _lastSyncedSubstitutions = _deepCopy(_substitutions);
@@ -385,7 +477,11 @@ class DietProvider extends ChangeNotifier {
         'substitutions': _substitutions,
       });
       if (_auth.currentUser != null) {
-        await _firestore.saveDietToHistory(_dietData!, _substitutions!);
+        await _firestore.saveDietToHistory(
+          _sanitize(_dietData!),
+          _sanitize(_substitutions ?? {}),
+          {}, // <--- TERZO ARGOMENTO: Nessuno swap attivo all'inizio
+        );
         _lastCloudSave = DateTime.now();
         _lastSyncedDiet = _deepCopy(_dietData);
         _lastSyncedSubstitutions = _deepCopy(_substitutions);
@@ -527,8 +623,7 @@ class DietProvider extends ChangeNotifier {
 
           // CONTROLLO 1: È stato mangiato? (Logica robusta per SQLite/JSON)
           var c = dish['consumed'];
-          bool isConsumed =
-              c == true ||
+          bool isConsumed = c == true ||
               c.toString().toLowerCase() == 'true' ||
               c == 1 ||
               c.toString() == '1';

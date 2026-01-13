@@ -14,6 +14,38 @@ class HistoryScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text("Cronologia Diete")),
+      floatingActionButton: FloatingActionButton.extended(
+        label: const Text('Test Sync (Force)'),
+        icon: const Icon(Icons.cloud_sync),
+        backgroundColor: Colors.orange,
+        onPressed: () async {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('⏳ Esecuzione Sync Forzato...')),
+          );
+
+          // Esegue il sync
+          final result = await Provider.of<DietProvider>(
+            context,
+            listen: false,
+          ).runSmartSyncCheck(forceSync: true);
+
+          // [FIX LINTER] Verifica se il widget è ancora attivo prima di usare context
+          if (!context.mounted) return;
+
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result),
+              backgroundColor:
+                  result.contains('✅') ||
+                      result.contains('☁️') ||
+                      result.contains('🆕')
+                  ? Colors.green
+                  : Colors.amber[900],
+            ),
+          );
+        },
+      ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: firestore.getDietHistory(),
         builder: (context, snapshot) {
@@ -105,7 +137,8 @@ class HistoryScreen extends StatelessWidget {
                           FilledButton(
                             onPressed: () {
                               context.read<DietProvider>().loadHistoricalDiet(
-                                diet,
+                                diet, // I dati
+                                diet['id'], // L'ID Firestore (che abbiamo aggiunto nel map del service)
                               );
                               Navigator.pop(c);
                               Navigator.pop(context);
