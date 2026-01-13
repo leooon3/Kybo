@@ -67,6 +67,11 @@ if not firebase_admin._apps:
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
+
+# [NEW] SEMAFORO DI CONCORRENZA
+# Limita a max 2 operazioni pesanti (OCR/Parsing) simultanee per non bloccare la CPU
+# Se arrivano 10 richieste: 2 eseguono, 8 aspettano in coda senza crashare il server.
+heavy_tasks_semaphore = asyncio.Semaphore(2)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -197,24 +202,22 @@ async def start_background_tasks():
     asyncio.create_task(maintenance_worker())
 
 # --- ENDPOINTS ---
-
 @app.post("/upload-diet", response_model=DietResponse)
 @limiter.limit("5/minute")
 async def upload_diet(request: Request, file: UploadFile = File(...), fcm_token: Optional[str] = Form(None), user_id: str = Depends(get_current_uid)):
     if not file.filename.lower().endswith('.pdf'): raise HTTPException(status_code=400, detail="Only PDF allowed")
     
-    # [FIX 3.1] Streaming DIRETTO (RAM -> Parser)
-    try:
-        # file.file è un oggetto "SpooledTemporaryFile" che si comporta come un file aperto
-        raw_data = await run_in_threadpool(diet_parser.parse_complex_diet, file.file)
-        
-        if fcm_token: await run_in_threadpool(notification_service.send_diet_ready, fcm_token)
-        return _convert_to_app_format(raw_data)
-    except Exception as e:
-        logger.error("upload_diet_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await file.close() # Chiudiamo lo stream correttamente
+    # [FIX CONCORRENZA] Avvolgiamo l'operazione pesante nel semaforo
+    async with heavy_tasks_semaphore:
+        try:
+            raw_data = await run_in_threadpool(diet_parser.parse_complex_diet, file.file)
+            if fcm_token: await run_in_threadpool(notification_service.send_diet_ready, fcm_token)
+            return _convert_to_app_format(raw_data)
+        except Exception as e:
+            logger.error("upload_diet_error", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            await file.close()
  
 @app.post("/upload-diet/{target_uid}", response_model=DietResponse)
 @limiter.limit("10/minute")
@@ -277,14 +280,13 @@ async def upload_diet_admin(request: Request, target_uid: str, file: UploadFile 
         
 @app.post("/scan-receipt")
 async def scan_receipt(request: Request, file: UploadFile = File(...), allowed_foods: Json[List[str]] = Form(...), user_id: str = Depends(get_current_uid)):
-    # [FIX 3.2] Streaming + Cleanup
     try:
-        # Istanziamo lo scanner con la lista (che verrà troncata se troppo lunga)
         current_scanner = ReceiptScanner(allowed_foods_list=allowed_foods)
         
-        # Passiamo lo stream (file.file) invece di creare un temp file su disco
-        found_items = await run_in_threadpool(current_scanner.scan_receipt, file.file)
-        
+        # [FIX CONCORRENZA] Avvolgiamo l'OCR nel semaforo
+        async with heavy_tasks_semaphore:
+            found_items = await run_in_threadpool(current_scanner.scan_receipt, file.file)
+            
         return JSONResponse(content=found_items)
     except Exception as e:
         logger.error("scan_receipt_error", error=str(e))

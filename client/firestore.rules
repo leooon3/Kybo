@@ -29,7 +29,8 @@ service cloud.firestore {
       // L'utente (isOwner) può aggiornare SOLO SE NON tocca i campi proibiti.
       // Admin e Nutrizionista mantengono i loro permessi completi.
       allow update: if (isOwner(userId) && 
-                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'parent_id', 'email', 'uid', 'is_active'])) ||
+                        request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['first_name', 'last_name'])) ||
                        hasRole('admin') || 
                        (hasRole('nutritionist') && (resource.data.parent_id == request.auth.uid || resource.data.created_by == request.auth.uid));
 
@@ -44,8 +45,18 @@ service cloud.firestore {
       }
       
       match /history/{docId} {
-        allow read: if isOwner(userId) || (hasRole('nutritionist') && get(/databases/$(database)/documents/users/$(userId)).data.parent_id == request.auth.uid);
-        allow write: if hasRole('admin') || (hasRole('nutritionist') && get(/databases/$(database)/documents/users/$(userId)).data.parent_id == request.auth.uid);
+        // READ: Proprietario, Admin o Nutrizionista assegnato
+        allow read: if isOwner(userId) ||
+                   (hasRole('nutritionist') && get(/databases/$(database)/documents/users/$(userId)).data.parent_id == request.auth.uid);
+        
+        // CREATE: Proprietario (per il Sync), Admin o Nutrizionista
+        allow create: if isOwner(userId) || 
+                      hasRole('admin') || 
+                      (hasRole('nutritionist') && get(/databases/$(database)/documents/users/$(userId)).data.parent_id == request.auth.uid);
+
+        // UPDATE/DELETE: Solo Admin o Nutrizionista (Lo storico deve essere immutabile per l'utente)
+        allow update, delete: if hasRole('admin') || 
+                              (hasRole('nutritionist') && get(/databases/$(database)/documents/users/$(userId)).data.parent_id == request.auth.uid);
       }
 
       match /parser_history/{docId} {

@@ -1,12 +1,20 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    
+    // Regola Globale: Nega tutto ciò che non è esplicitamente permesso sotto
     match /{allPaths=**} {
-      // PERMETTI LETTURA: Utenti loggati (App)
-      allow read: if request.auth != null;
-      
-      // BLOCCA SCRITTURA: Solo il Backend (Admin SDK) può scrivere
-      allow write: if false;
+      allow read, write: if false;
     }
+
+    // Regola Specifica Utenti: Ogni utente ha la sua sandbox privata
+    match /users/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // (Opzionale) Se l'admin deve vedere tutto, scommenta questa sezione:
+    // match /{allPaths=**} {
+    //   allow read: if request.auth.token.role == 'admin';
+    // }
   }
 }
